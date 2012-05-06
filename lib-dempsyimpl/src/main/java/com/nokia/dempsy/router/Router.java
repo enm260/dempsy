@@ -87,7 +87,7 @@ import com.nokia.dempsy.serialization.Serializer;
  * 
  * <p>A router requires a non-null ApplicationDefinition during construction.</p>
  */
-public class Router implements Dispatcher
+public class Router implements Dispatcher, RoutingStrategy.Outbound.OutboundCoordinator
 {
    private static Logger logger = LoggerFactory.getLogger(Router.class);
 
@@ -169,17 +169,27 @@ public class Router implements Dispatcher
       {
          if (explicitClusterDestinations == null || explicitClusterDestinations.contains(clusterDef.getClusterId()))
          {
+            // need to add the ClusterRouter's to the list. Currently this is done 
+            //  by the ClusterRouter itself when it's instantiated.
             ClusterRouter router = new ClusterRouter(clusterDef);
             router.setup(false);
          }
       }
    }
+   
+   /**
+    * Satisfies the {@link RoutingStrategy.Outbound.OutboundCoordinator} requirements bu returning
+    * this node's {@link MpClusterSession}.
+    */
+   @Override
+   public MpClusterSession<ClusterInformation, SlotInformation> getClusterSession() { return mpClusterSession; }
 
    /**
     * A {@link Router} is also a {@link Dispatcher} that is the instance that's typically
     * injected into {@link Adaptor}s. The implementation of this dispatch routes the message
     * to the appropriate {@link MessageProcessor} in the appropriate {@link ClusterDefinition}
     */
+   @Override
    public void dispatch(Object message)
    {
       if(message == null)
@@ -272,13 +282,11 @@ public class Router implements Dispatcher
     * This class routes messages within a particular cluster. It is protected for test 
     * access only. Otherwise it would be private.
     */
-   protected class ClusterRouter implements MpClusterWatcher<ClusterInformation,SlotInformation>
+   protected class ClusterRouter
    {
       private Serializer<Object> serializer;
       private ClusterId clusterId;
-      private MpCluster<ClusterInformation,SlotInformation> clusterHandle;
       private SenderFactory senderFactory = defaultSenderFactory;
-      private volatile boolean isSetup = false;
       private RoutingStrategy strategy;
       private RoutingStrategy.Outbound strategyOutbound;
       
@@ -292,53 +300,22 @@ public class Router implements Dispatcher
             throw new DempsyException("Could not retrieve the routing strategy for " + SafeString.valueOf(clusterId));
          strategy = (RoutingStrategy)clusterRs;
          
-         strategyOutbound = strategy.createOutbound();
+         strategyOutbound = strategy.createOutbound(Router.this);
          
          serializer = (Serializer<Object>)clusterDef.getSerializer();
          if (serializer == null)
             throw new DempsyException("Could not retrieve the serializer for " + SafeString.valueOf(clusterId));
       }
       
-      @Override
-      public void process(MpCluster<ClusterInformation,SlotInformation> cluster)
-      {
-         // it appears that the cluster configuration has changed.
-         // we need to reset up the distributor
-         try
-         {
-            setup(true);
-         }
-         catch(MpClusterException e)
-         {
-            logger.error("Major problem with the Router. Can't respond to changes in the cluster information:", e);
-         }
-      }
-
       public void route(Object key, Object message)
       {
-         SlotInformation target = null;
          boolean messageFailed = true;
          Sender sender = null;
          try
          {
-            target = strategyOutbound.selectSlotForMessageKey(key);
-            if(target == null)
+            Destination destination = strategyOutbound.selectDestinationForMessage(key, message);
+            if(destination != null)
             {
-               setup(false);
-               target = strategyOutbound.selectSlotForMessageKey(key);
-            }
-
-            if(target != null)
-            {
-               Destination destination = target.getDestination();
-
-               if (destination == null)
-               {
-                  logger.error("Couldn't find a destination for " + SafeString.objectDescription(message) + 
-                        " from the cluster slot information selected " + SafeString.objectDescription(target));
-                  return;
-               }
-
                sender = senderFactory.getSender(destination);
                if (sender == null)
                   logger.error("Couldn't figure out a means to send " + SafeString.objectDescription(message) +
@@ -386,51 +363,6 @@ public class Router implements Dispatcher
          }
       }
       
-      public void setup(boolean force) throws MpClusterException
-      {
-         if (!isSetup || force)
-         {
-            synchronized(this)
-            {
-               if (!isSetup || force) // double checked locking
-               {
-                  isSetup = false;
-                  clusterHandle = mpClusterSession.getCluster(clusterId);
-                  clusterHandle.addWatcher(this);
-                  strategyOutbound.resetCluster(clusterHandle);
-
-                  Set<Class<?>> messageClasses = new HashSet<Class<?>>();
-
-                  Collection<MpClusterSlot<SlotInformation>> nodes = clusterHandle.getActiveSlots();
-                  if(nodes != null)
-                  {
-                     Set<Class<?>> msgClass = null;
-                     for(MpClusterSlot<SlotInformation> node: nodes)
-                     {
-                        SlotInformation slotInfo = node.getSlotInformation();
-                        if(slotInfo != null)
-                        {
-                           msgClass = slotInfo.getMessageClasses();
-                           if (msgClass != null)
-                              messageClasses.addAll(msgClass);
-                        }
-                     }
-                     
-                     // now we may have new messageClasses so we need to register with the Router
-                     for (Class<?> clazz : messageClasses)
-                     {
-                        Set<ClusterRouter> cur = Collections.newSetFromMap(new ConcurrentHashMap<ClusterRouter, Boolean>()); // potential
-                        Set<ClusterRouter> tmp = routerMap.putIfAbsent(clazz, cur);
-                        if (tmp != null)
-                           cur = tmp;
-                        cur.add(this);
-                     }
-
-                  }
-               }
-            }
-         }
-      }
       
       private void stop()
       {
