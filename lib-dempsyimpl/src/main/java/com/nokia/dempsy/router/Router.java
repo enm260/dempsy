@@ -34,9 +34,9 @@ import org.slf4j.LoggerFactory;
 
 import com.nokia.dempsy.Adaptor;
 import com.nokia.dempsy.Dempsy;
+import com.nokia.dempsy.Dempsy.Application.Cluster.Node;
 import com.nokia.dempsy.DempsyException;
 import com.nokia.dempsy.Dispatcher;
-import com.nokia.dempsy.Dempsy.Application.Cluster.Node;
 import com.nokia.dempsy.annotations.MessageKey;
 import com.nokia.dempsy.annotations.MessageProcessor;
 import com.nokia.dempsy.config.ApplicationDefinition;
@@ -51,11 +51,8 @@ import com.nokia.dempsy.messagetransport.Sender;
 import com.nokia.dempsy.messagetransport.SenderFactory;
 import com.nokia.dempsy.messagetransport.Transport;
 import com.nokia.dempsy.monitoring.StatsCollector;
-import com.nokia.dempsy.mpcluster.MpCluster;
 import com.nokia.dempsy.mpcluster.MpClusterException;
 import com.nokia.dempsy.mpcluster.MpClusterSession;
-import com.nokia.dempsy.mpcluster.MpClusterSlot;
-import com.nokia.dempsy.mpcluster.MpClusterWatcher;
 import com.nokia.dempsy.serialization.SerializationException;
 import com.nokia.dempsy.serialization.Serializer;
 
@@ -87,7 +84,7 @@ import com.nokia.dempsy.serialization.Serializer;
  * 
  * <p>A router requires a non-null ApplicationDefinition during construction.</p>
  */
-public class Router implements Dispatcher, RoutingStrategy.Outbound.OutboundCoordinator
+public class Router implements Dispatcher, RoutingStrategy.Outbound.Coordinator
 {
    private static Logger logger = LoggerFactory.getLogger(Router.class);
 
@@ -161,20 +158,6 @@ public class Router implements Dispatcher, RoutingStrategy.Outbound.OutboundCoor
             (currentClusterDef != null && currentClusterDef.hasExplicitDestinations()) ? new HashSet<ClusterId>() : null;
       if (explicitClusterDestinations != null)
          explicitClusterDestinations.addAll(Arrays.asList(currentClusterDef.getDestinations()));
-         
-
-      // if the currentCluster is set and THAT cluster has explicit destinations
-      //  then those are the only ones we want to consider
-      for (ClusterDefinition clusterDef : applicationDefinition.getClusterDefinitions())
-      {
-         if (explicitClusterDestinations == null || explicitClusterDestinations.contains(clusterDef.getClusterId()))
-         {
-            // need to add the ClusterRouter's to the list. Currently this is done 
-            //  by the ClusterRouter itself when it's instantiated.
-            ClusterRouter router = new ClusterRouter(clusterDef);
-            router.setup(false);
-         }
-      }
    }
    
    /**
@@ -363,7 +346,52 @@ public class Router implements Dispatcher, RoutingStrategy.Outbound.OutboundCoor
          }
       }
       
-      
+      public void setup() throws MpClusterException
+      {
+         if (!isSetup || force)
+         {
+            synchronized(this)
+            {
+               if (!isSetup || force) // double checked locking
+               {
+                  isSetup = false;
+                  clusterHandle = mpClusterSession.getCluster(clusterId);
+                  clusterHandle.addWatcher(this);
+                  strategyOutbound.resetCluster(clusterHandle);
+
+                  Set<Class<?>> messageClasses = new HashSet<Class<?>>();
+
+                  Collection<MpClusterSlot<SlotInformation>> nodes = clusterHandle.getActiveSlots();
+                  if(nodes != null)
+                  {
+                     Set<Class<?>> msgClass = null;
+                     for(MpClusterSlot<SlotInformation> node: nodes)
+                     {
+                        SlotInformation slotInfo = node.getSlotInformation();
+                        if(slotInfo != null)
+                        {
+                           msgClass = slotInfo.getMessageClasses();
+                           if (msgClass != null)
+                              messageClasses.addAll(msgClass);
+                        }
+                     }
+                     
+                     // now we may have new messageClasses so we need to register with the Router
+                     for (Class<?> clazz : messageClasses)
+                     {
+                        Set<ClusterRouter> cur = Collections.newSetFromMap(new ConcurrentHashMap<ClusterRouter, Boolean>()); // potential
+                        Set<ClusterRouter> tmp = routerMap.putIfAbsent(clazz, cur);
+                        if (tmp != null)
+                           cur = tmp;
+                        cur.add(this);
+                     }
+
+                  }
+               }
+            }
+         }
+      }
+
       private void stop()
       {
          try { if (senderFactory != null) senderFactory.stop(); }

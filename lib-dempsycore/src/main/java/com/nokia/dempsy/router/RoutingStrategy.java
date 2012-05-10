@@ -22,10 +22,8 @@ import com.nokia.dempsy.DempsyException;
 import com.nokia.dempsy.annotations.MessageKey;
 import com.nokia.dempsy.config.ApplicationDefinition;
 import com.nokia.dempsy.config.ClusterDefinition;
-import com.nokia.dempsy.config.ClusterId;
 import com.nokia.dempsy.messagetransport.Destination;
 import com.nokia.dempsy.mpcluster.MpCluster;
-import com.nokia.dempsy.mpcluster.MpClusterException;
 import com.nokia.dempsy.mpcluster.MpClusterSession;
 
 /**
@@ -83,13 +81,13 @@ public interface RoutingStrategy
       /**
        * <p>Each node can have many Outbound instances and those Outbound cluster references
        * can come and go. In order to tell Dempsy about what's going on in the cluster
-       * the Outbound should be updating the state of the OutboundCoordinator.</p>
+       * the Outbound should be updating the state of the Coordinator.</p>
        * 
        * <p>Implementors of the RoutingStrategy do not need to implement this interface.
        * There is only one implementation and that instance will be supplied by the
        * framework.</p>
        */
-      public static interface OutboundCoordinator
+      public static interface Coordinator
       {
          /**
           * If the Outbound needs access to the ClusterSession (which in every possible
@@ -104,22 +102,13 @@ public interface RoutingStrategy
    
    public static interface Inbound
    {
-      /**
-       * <p>resetCluster is called when the cluster for the Inbound side changes. In this
-       * way implementations of this class do not need to be MpClusterWatchers.</p>
-       * 
-       * @param cluster - the cluster handle containing the new state.
-       * @throws MpClusterException when the implementation has a problem accessing the cluster
-       */
-      public void resetCluster(MpCluster<ClusterInformation, SlotInformation> cluster,
-            List<Class<?>> messageTypes, Destination thisDestination) throws MpClusterException;
-      
       public boolean doesMessageKeyBelongToNode(Object messageKey);
    }
    
-   public Inbound createInbound();
+   public Inbound createInbound(MpCluster<ClusterInformation, SlotInformation> cluster,
+         List<Class<?>> messageTypes, Destination thisDestination);
    
-   public Outbound createOutbound(Outbound.OutboundCoordinator coordinator);
+   public Outbound createOutbound(Outbound.Coordinator coordinator,  MpCluster<ClusterInformation, SlotInformation> cluster);
    
 }
 

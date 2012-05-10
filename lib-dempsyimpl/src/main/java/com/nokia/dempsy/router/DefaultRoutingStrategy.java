@@ -29,11 +29,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.nokia.dempsy.DempsyException;
+import com.nokia.dempsy.config.ClusterId;
 import com.nokia.dempsy.internal.util.SafeString;
 import com.nokia.dempsy.messagetransport.Destination;
 import com.nokia.dempsy.mpcluster.MpCluster;
 import com.nokia.dempsy.mpcluster.MpClusterException;
 import com.nokia.dempsy.mpcluster.MpClusterSlot;
+import com.nokia.dempsy.mpcluster.MpClusterWatcher;
 
 /**
  * This Routing Strategy uses the {@link MpCluster} to negotiate with other instances in the 
@@ -45,6 +47,7 @@ public class DefaultRoutingStrategy implements RoutingStrategy
    
    private int defaultTotalSlots;
    private int defaultNumNodes;
+   private Set<Class<?>> routerMap = new HashSet<Class<?>>();
    
    public DefaultRoutingStrategy(int defaultTotalSlots, int defaultNumNodes)
    {
@@ -52,13 +55,29 @@ public class DefaultRoutingStrategy implements RoutingStrategy
       this.defaultNumNodes = defaultNumNodes;
    }
    
-   private class Outbound implements RoutingStrategy.Outbound
+   private class Outbound implements RoutingStrategy.Outbound, MpClusterWatcher<ClusterInformation, SlotInformation>
    {
-      private ConcurrentHashMap<Integer, DefaultRouterSlotInfo> destinations = new ConcurrentHashMap<Integer, DefaultRouterSlotInfo>();
+      private ConcurrentHashMap<Integer, Destination> destinations = new ConcurrentHashMap<Integer, Destination>();
       private int totalAddressCounts = -1;
+      private RoutingStrategy.Outbound.Coordinator coordinator;
+      private MpCluster<ClusterInformation, SlotInformation> cluster;
+      private ClusterId clusterId;
+      private transient boolean isSetup = false;
+      
+      private Outbound(RoutingStrategy.Outbound.Coordinator coordinator,
+            MpCluster<ClusterInformation, SlotInformation> cluster)
+      {
+         this.coordinator = coordinator;
+         this.cluster = cluster;
+         this.clusterId = cluster.getClusterId();
+         cluster.addWatcher(this);
+         // force a call to process to update
+         setup()
+         process(cluster);
+      }
 
       @Override
-      public synchronized SlotInformation selectSlotForMessageKey(Object messageKey) throws DempsyException
+      public Destination selectDestinationForMessage(Object messageKey, Object message) throws DempsyException
       {
          if (totalAddressCounts < 0)
             throw new DempsyException("It appears the Outbound strategy for the message key " + 
@@ -68,70 +87,141 @@ public class DefaultRoutingStrategy implements RoutingStrategy
          return destinations.get(calculatedModValue);
       }
       
-      public synchronized void resetCluster(MpCluster<ClusterInformation, SlotInformation> clusterHandle) throws MpClusterException
+      @Override
+      public synchronized void process(MpCluster<ClusterInformation, SlotInformation> clusterHandle)
       {
          if (logger.isTraceEnabled())
-            logger.trace("Resetting Outbound Strategy for cluster " + clusterHandle.getClusterId());
+            logger.trace("Resetting Outbound Strategy for cluster " + clusterId);
          
          destinations.clear();
-         int newtotalAddressCounts = fillMapFromActiveSlots(destinations,clusterHandle);
-         if (newtotalAddressCounts == 0)
-            throw new MpClusterException("The cluster " + clusterHandle.getClusterId() + 
-                  " seems to have invalid slot information. Someone has set the total number of slots to zero.");
-         totalAddressCounts = newtotalAddressCounts > 0 ? newtotalAddressCounts : totalAddressCounts;
+         Map<Integer, DefaultRouterSlotInfo> slotInfoMap = new HashMap<Integer, DefaultRouterSlotInfo>();
+         int newtotalAddressCounts;
+         try
+         {
+            newtotalAddressCounts = fillMapFromActiveSlots(slotInfoMap,clusterHandle);
+            if (newtotalAddressCounts == 0)
+               logger.error("The cluster " + clusterHandle.getClusterId() + 
+                     " seems to have invalid slot information. Someone has set the total number of slots to zero.");
+            totalAddressCounts = newtotalAddressCounts > 0 ? newtotalAddressCounts : totalAddressCounts;
+         }
+         catch(MpClusterException e)
+         {
+            logger.error("Major problem with the Router. Can't respond to changes in the cluster information:", e);
+         }
       }
+
+      private void setup(MpCluster<ClusterInformation, SlotInformation> clusterHandle)
+      {
+         if (!isSetup || force)
+         {
+            synchronized(this)
+            {
+               if (!isSetup || force) // double checked locking?
+               {
+                  isSetup = false;
+
+                  Collection<MpClusterSlot<SlotInformation>> nodes = clusterHandle.getActiveSlots();
+                  if(nodes != null)
+                  {
+                     Set<Class<?>> msgClass = null;
+                     for(MpClusterSlot<SlotInformation> node: nodes)
+                     {
+                        SlotInformation slotInfo = node.getSlotInformation();
+                        if(slotInfo != null)
+                        {
+                           msgClass = slotInfo.getMessageClasses();
+                           if (msgClass != null)
+                              messageClasses.addAll(msgClass);
+                        }
+                     }
+                     
+                     // now we may have new messageClasses so we need to register with the Router
+                     for (Class<?> clazz : messageClasses)
+                     {
+                        Set<ClusterRouter> cur = Collections.newSetFromMap(new ConcurrentHashMap<ClusterRouter, Boolean>()); // potential
+                        Set<ClusterRouter> tmp = routerMap.putIfAbsent(clazz, cur);
+                        if (tmp != null)
+                           cur = tmp;
+                        cur.add(this);
+                     }
+
+                  }
+               }
+            }
+         }
+      }
+
    } // end Outbound class definition
    
-   private class Inbound implements RoutingStrategy.Inbound
+   private class Inbound implements RoutingStrategy.Inbound, MpClusterWatcher<ClusterInformation,SlotInformation>
    {
       private List<Integer> destinationsAcquired = new ArrayList<Integer>();
+      private Destination destination;
+      private List<Class<?>> messageTypes;
+      private MpCluster<ClusterInformation, SlotInformation> cluster;
+      private ClusterId clusterId;
+      
+      private Inbound(MpCluster<ClusterInformation, SlotInformation> cluster,
+            List<Class<?>> messageTypes, Destination thisDestination)
+      {
+         this.cluster = cluster;
+         this.clusterId = cluster.getClusterId();
+         this.destination = thisDestination;
+         this.messageTypes = messageTypes;
+         cluster.addWatcher(this);
+      }
 
       @Override
-      public synchronized void resetCluster(MpCluster<ClusterInformation, SlotInformation> clusterHandle,
-            List<Class<?>> messagesTypes, Destination destination) throws MpClusterException
+      public synchronized void process(MpCluster<ClusterInformation, SlotInformation> clusterHandle)
       {
          if (logger.isTraceEnabled())
-            logger.trace("Resetting Inbound Strategy for cluster " + clusterHandle.getClusterId());
+            logger.trace("Resetting Inbound Strategy for cluster " + clusterId);
 
          int minNodeCount = defaultNumNodes;
          int totalAddressNeeded = defaultTotalSlots;
          Random random = new Random();
          
-         //==============================================================================
-         // need to verify that the existing slots in destinationsAcquired are still ours
-         Map<Integer,DefaultRouterSlotInfo> slotNumbersToSlots = new HashMap<Integer,DefaultRouterSlotInfo>();
-         fillMapFromActiveSlots(slotNumbersToSlots,clusterHandle);
-         Collection<Integer> slotsToReaquire = new ArrayList<Integer>();
-         for (Integer destinationSlot : destinationsAcquired)
+         try
          {
-            // select the coresponding slot information
-            DefaultRouterSlotInfo slotInfo = slotNumbersToSlots.get(destinationSlot);
-            if (slotInfo == null || !destination.equals(slotInfo.getDestination()))
-               slotsToReaquire.add(destinationSlot);
-         }
-         //==============================================================================
-         
-         //==============================================================================
-         // Now reaquire the potentially lost slots
-         for (Integer slotToReaquire : slotsToReaquire)
-         {
-            if (!acquireSlot(slotToReaquire, totalAddressNeeded,
-                  clusterHandle, messagesTypes, destination))
+            //==============================================================================
+            // need to verify that the existing slots in destinationsAcquired are still ours
+            Map<Integer,DefaultRouterSlotInfo> slotNumbersToSlots = new HashMap<Integer,DefaultRouterSlotInfo>();
+            fillMapFromActiveSlots(slotNumbersToSlots,clusterHandle);
+            Collection<Integer> slotsToReaquire = new ArrayList<Integer>();
+            for (Integer destinationSlot : destinationsAcquired)
             {
-               // in this case, see if I already own it...
-               logger.error("Cannot reaquire the slot " + slotToReaquire + " for the cluster " + clusterHandle.getClusterId());
+               // select the coresponding slot information
+               DefaultRouterSlotInfo slotInfo = slotNumbersToSlots.get(destinationSlot);
+               if (slotInfo == null || !destination.equals(slotInfo.getDestination()))
+                  slotsToReaquire.add(destinationSlot);
+            }
+            //==============================================================================
+
+            //==============================================================================
+            // Now reaquire the potentially lost slots
+            for (Integer slotToReaquire : slotsToReaquire)
+            {
+               if (!acquireSlot(slotToReaquire, totalAddressNeeded, clusterHandle, messageTypes, destination))
+               {
+                  // in this case, see if I already own it...
+                  logger.error("Cannot reaquire the slot " + slotToReaquire + " for the cluster " + clusterHandle.getClusterId());
+               }
+            }
+            //==============================================================================
+
+            while(needToGrabMoreSlots(clusterHandle,minNodeCount,totalAddressNeeded))
+            {
+               int randomValue = random.nextInt(totalAddressNeeded);
+               if(destinationsAcquired.contains(randomValue))
+                  continue;
+               if (acquireSlot(randomValue, totalAddressNeeded,
+                     clusterHandle, messageTypes, destination))
+                  destinationsAcquired.add(randomValue);                  
             }
          }
-         //==============================================================================
-
-         while(needToGrabMoreSlots(clusterHandle,minNodeCount,totalAddressNeeded))
+         catch (MpClusterException e)
          {
-            int randomValue = random.nextInt(totalAddressNeeded);
-            if(destinationsAcquired.contains(randomValue))
-               continue;
-            if (acquireSlot(randomValue, totalAddressNeeded,
-                  clusterHandle, messagesTypes, destination))
-               destinationsAcquired.add(randomValue);                  
+            
          }
       }
       
@@ -151,9 +241,19 @@ public class DefaultRoutingStrategy implements RoutingStrategy
       
    } // end Inbound class definition
    
-   public RoutingStrategy.Inbound createInbound() { return new Inbound(); }
+   @Override
+   public RoutingStrategy.Inbound createInbound(MpCluster<ClusterInformation, SlotInformation> cluster,
+         List<Class<?>> messageTypes, Destination thisDestination) 
+   {
+         return new Inbound(cluster, messageTypes, thisDestination);
+   }
    
-   public RoutingStrategy.Outbound createOutbound() { return new Outbound(); }
+   @Override
+   public RoutingStrategy.Outbound createOutbound(RoutingStrategy.Outbound.Coordinator coordinator,
+            MpCluster<ClusterInformation, SlotInformation> cluster)
+   {
+      return new Outbound(coordinator,cluster); 
+   }
    
    static class DefaultRouterSlotInfo extends SlotInformation
    {
