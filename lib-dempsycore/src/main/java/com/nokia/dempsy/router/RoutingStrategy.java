@@ -22,8 +22,10 @@ import com.nokia.dempsy.DempsyException;
 import com.nokia.dempsy.annotations.MessageKey;
 import com.nokia.dempsy.config.ApplicationDefinition;
 import com.nokia.dempsy.config.ClusterDefinition;
+import com.nokia.dempsy.config.ClusterId;
 import com.nokia.dempsy.messagetransport.Destination;
 import com.nokia.dempsy.mpcluster.MpCluster;
+import com.nokia.dempsy.mpcluster.MpClusterException;
 import com.nokia.dempsy.mpcluster.MpClusterSession;
 
 /**
@@ -78,6 +80,30 @@ public interface RoutingStrategy
        */
       public Destination selectDestinationForMessage(Object messageKey, Object message) throws DempsyException;
       
+      /**
+       * <p>Each node can have many Outbound instances and those Outbound cluster references
+       * can come and go. In order to tell Dempsy about what's going on in the cluster
+       * the Outbound should be updating the state of the OutboundCoordinator.</p>
+       * 
+       * <p>Implementors of the RoutingStrategy do not need to implement this interface.
+       * There is only one implementation and that instance will be supplied by the
+       * framework.</p>
+       */
+      public static interface OutboundCoordinator
+      {
+         /**
+          * If the Outbound needs access to the ClusterSession (which in every possible
+          * case right now, it would seem to), then it can use the MpClusterSession
+          * it can get from here.
+          */
+         public MpClusterSession<ClusterInformation, SlotInformation> getClusterSession();
+         
+      }
+      
+   }
+   
+   public static interface Inbound
+   {
       /**
        * <p>Each node can have many Outbound instances and those Outbound cluster references
        * can come and go. In order to tell Dempsy about what's going on in the cluster
