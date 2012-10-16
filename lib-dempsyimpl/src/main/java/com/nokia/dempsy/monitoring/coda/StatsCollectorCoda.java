@@ -55,6 +55,7 @@ public class StatsCollectorCoda implements StatsCollector, MetricGetters
    public static final String MN_MP_CREATE = "message-processors-created";
    public static final String MN_MP_DELETE = "message-processors-deleted";
    public static final String GAGE_MPS_IN_PROCESS = "messages-in-process";
+   public static final String GAGE_MPS_IN_RECEIVE_QUEUE = "messages-in-receive-queue";
    public static final String TM_MP_PREIN = "pre-instantiation-duration";
    public static final String TM_MP_HANDLE = "mp-handle-message-duration";
    public static final String TM_MP_OUTPUT = "outputInvoke-duration";
@@ -66,7 +67,7 @@ public class StatsCollectorCoda implements StatsCollector, MetricGetters
       MN_MSG_PROC,         MN_MSG_SENT,
       MN_BYTES_SENT,       MN_MSG_UNSENT,
       MN_MP_CREATE,        MN_MP_DELETE,
-      GAGE_MPS_IN_PROCESS,
+      GAGE_MPS_IN_PROCESS, GAGE_MPS_IN_RECEIVE_QUEUE,
       TM_MP_PREIN,         TM_MP_HANDLE,
       TM_MP_OUTPUT,        TM_MP_EVIC
    };
@@ -82,8 +83,11 @@ public class StatsCollectorCoda implements StatsCollector, MetricGetters
    private Meter bytesSent;
    private Meter messagesUnsent;
    private AtomicInteger inProcessMessages;
+   private AtomicInteger queueDepth;
    @SuppressWarnings("unused")
    private Gauge<Integer> messagesInProcess;
+   @SuppressWarnings("unused")
+   private Gauge<Integer> messagesInReceivedQueue;
    private AtomicLong numberOfMPs;
    private Meter mpsCreated;
    private Meter mpsDeleted;
@@ -111,12 +115,21 @@ public class StatsCollectorCoda implements StatsCollector, MetricGetters
       bytesSent = Metrics.newMeter(Dempsy.class, MN_BYTES_SENT, scope, "bytes", TimeUnit.SECONDS);
       messagesUnsent = Metrics.newMeter(Dempsy.class, MN_MSG_UNSENT, scope, "messsages", TimeUnit.SECONDS);
       inProcessMessages = new AtomicInteger();
+      queueDepth = new AtomicInteger();
       messagesInProcess = Metrics.newGauge(Dempsy.class, GAGE_MPS_IN_PROCESS,
             scope, new Gauge<Integer>() {
          @Override
          public Integer value()
          {
             return inProcessMessages.get();
+         }
+      });
+      messagesInReceivedQueue = Metrics.newGauge(Dempsy.class, GAGE_MPS_IN_RECEIVE_QUEUE,
+            scope, new Gauge<Integer>() {
+         @Override
+         public Integer value()
+         {
+            return queueDepth.get();
          }
       });
 
@@ -205,6 +218,18 @@ public class StatsCollectorCoda implements StatsCollector, MetricGetters
    public void messageProcessorDeleted(Object key) {
       mpsDeleted.mark();
       numberOfMPs.decrementAndGet();
+   }
+   
+   @Override
+   public void messagesReceiveEnqueue()
+   {
+      queueDepth.incrementAndGet();
+   }
+   
+   @Override
+   public void messagesReceiveDequeue()
+   {
+      queueDepth.decrementAndGet();
    }
 
 

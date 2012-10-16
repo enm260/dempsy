@@ -40,6 +40,7 @@ public class BasicStatsCollector implements StatsCollector, MetricGetters
    private final AtomicLong numberOfMPs = new AtomicLong();
    private final AtomicLong mpsCreated = new AtomicLong();
    private final AtomicLong mpsDeleted = new AtomicLong();
+   private final AtomicLong queueDepth = new AtomicLong();
    
    private final AtomicLong preInstantiationDuration = new AtomicLong();
    private final AtomicLong mpHandleMessageDuration = new AtomicLong();
@@ -144,6 +145,18 @@ public class BasicStatsCollector implements StatsCollector, MetricGetters
    public void messageSent(byte[] message)
    {
       messagesSent.incrementAndGet();
+   }
+   
+   @Override
+   public void messagesReceiveEnqueue()
+   {
+      queueDepth.incrementAndGet();
+   }
+   
+   @Override
+   public void messagesReceiveDequeue()
+   {
+      queueDepth.decrementAndGet();
    }
 
    @Override

@@ -334,6 +334,9 @@ public class TcpReceiver implements Receiver
                         try
                         {
                            final byte[] pass = messageBytes;
+
+                           if (statsCollector != null)
+                              statsCollector.messagesReceiveEnqueue();
                            executor.submitLimited(new DempsyExecutor.Rejectable<Object>()
                            {
                               byte[] message = pass;
@@ -341,6 +344,8 @@ public class TcpReceiver implements Receiver
                               @Override
                               public Object call() throws Exception
                               {
+                                 if (statsCollector != null)
+                                    statsCollector.messagesReceiveDequeue();
                                  boolean messageSuccess = messageTransportListener.onMessage( message, overflowHandler != null );
                                  if (overflowHandler != null && !messageSuccess)
                                     overflowHandler.overflow(message);
@@ -351,7 +356,10 @@ public class TcpReceiver implements Receiver
                               public void rejected()
                               {
                                  if (statsCollector != null)
+                                 {
+                                    statsCollector.messagesReceiveDequeue();
                                     statsCollector.messageDiscarded(message);
+                                 }
                               }
                            });
                            

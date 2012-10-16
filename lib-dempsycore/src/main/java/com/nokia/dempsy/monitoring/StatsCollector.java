@@ -106,4 +106,9 @@ public interface StatsCollector {
     */
    public TimerContext evictionPassStarted();
    
+   public void messagesReceiveEnqueue();
+   
+   public void messagesReceiveDequeue();
+
+   
 }
