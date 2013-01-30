@@ -16,8 +16,11 @@
 
 package com.nokia.dempsy.router.microshard;
 
+import java.util.Collection;
+
 import com.nokia.dempsy.cluster.ClusterInfoException;
 import com.nokia.dempsy.cluster.ClusterInfoSession;
+import com.nokia.dempsy.cluster.ClusterInfoWatcher;
 import com.nokia.dempsy.cluster.DirMode;
 import com.nokia.dempsy.config.ClusterId;
 
@@ -28,17 +31,17 @@ public class MicroShardUtils
    
    private String appDir;
    private String clusterDir;
-   private String nodesDir;
    private String shardsDir;
-   private String transitionDir;
+   private String transitionRequestDir;
+   private String transitionOfferDir;
    
    public MicroShardUtils(ClusterId clusterId)
    {
       this.appDir = getAppRootDir() + "/" + clusterId.getApplicationName();
       this.clusterDir = getAppDir() + "/" + clusterId.getMpClusterName();
-      this.nodesDir = getClusterDir()+"/nodes";
       this.shardsDir = getClusterDir()+"/shards";
-      this.transitionDir = getClusterDir() + "/transition";
+      this.transitionRequestDir = getClusterDir() + "/transitionRequest";
+      this.transitionOfferDir = getClusterDir() + "/transitionOffer";
    }
 
    /**
@@ -68,9 +71,10 @@ public class MicroShardUtils
     * an instance of a {@link DefaultShardInfo} which the manager will use to copy into 
     * the appropriate shardsDir subdirectory in order to accomplish an assignment.
     */
-   public String getNodesDir() { return nodesDir; }
    
-   public String getTransistionDir() { return transitionDir; }
+   public String getTransistionOfferDir() { return transitionOfferDir; }
+
+   public String getTransistionRequestDir() { return transitionRequestDir; }
 
    public String getShardsDir() { return shardsDir; }
 
@@ -83,13 +87,13 @@ public class MicroShardUtils
       return session.mkdir(getAppRootDir(), DirMode.PERSISTENT);
    }
    
-   public String mkAppDir(ClusterInfoSession session) throws ClusterInfoException
+   public final String mkAppDir(ClusterInfoSession session) throws ClusterInfoException
    {
       mkAppRootDir(session);
       return session.mkdir(getAppDir(), DirMode.PERSISTENT);
    }
    
-   public String mkClusterDir(ClusterInfoSession session, Object obj) throws ClusterInfoException
+   public final String mkClusterDir(ClusterInfoSession session, Object obj) throws ClusterInfoException
    {
       mkAppDir(session);
       String ret = session.mkdir(getClusterDir(), DirMode.PERSISTENT);
@@ -98,16 +102,57 @@ public class MicroShardUtils
       return ret;
    }
    
-   public void mkAllPersistentAppDirs(ClusterInfoSession session,Object obj) throws ClusterInfoException
+   public final void mkAllPersistentAppDirs(ClusterInfoSession session,Object obj) throws ClusterInfoException
    {
       mkClusterDir(session,obj);
       session.mkdir(getShardsDir(), DirMode.PERSISTENT);
-      session.mkdir(getNodesDir(), DirMode.PERSISTENT);
-      session.mkdir(getTransistionDir(), DirMode.PERSISTENT);
+      session.mkdir(getTransistionRequestDir(), DirMode.PERSISTENT);
+      session.mkdir(getTransistionOfferDir(), DirMode.PERSISTENT);
    }
    
-   public void mkManagerDir(ClusterInfoSession session) throws ClusterInfoException
+   public final void mkManagerDir(ClusterInfoSession session) throws ClusterInfoException
    {
       session.mkdir(managerDir, DirMode.PERSISTENT);
+   }
+   
+   /**
+    * This uses the ClusterInfoSession to indicate to other members of the cluster that the caller
+    * is requesting a shard since there is an imbalance.
+    */
+   public final String requestAShard(ClusterInfoSession session) throws ClusterInfoException
+   {
+      return session.mkdir(getTransistionRequestDir() + "/request_", DirMode.EPHEMERAL_SEQUENTIAL);
+   }
+   
+   /**
+    * Given that a request was made using makeRequest, the string returned can be used to 
+    * see if any offers have been provided.
+    */
+   public final String findFirstOfferGivenRequest(ClusterInfoSession session, String requestDirectory, 
+         ClusterInfoWatcher transitionOfferWatcher) throws ClusterInfoException
+   {
+      // get all of the outstanding offers
+      Collection<String> offers = session.getSubdirs(getTransistionOfferDir(), transitionOfferWatcher);
+
+      String ret = null;
+      for (String cur : offers)
+      {
+         if (cur.startsWith(requestDirectory + "_"))
+         {
+            ret = cur;
+            break;
+         }
+      }
+      return ret;
+   }
+   
+   public final String makeOffer(ClusterInfoSession session, String requestDirectory)
+   {
+      
+   }
+   
+   public final int extractShardFromOfferDirectory(String madeOfferDir, String requestDir)
+   {
+      
    }
 }
