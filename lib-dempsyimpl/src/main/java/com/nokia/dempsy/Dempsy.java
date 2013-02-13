@@ -161,15 +161,15 @@ public class Dempsy
 
                   RoutingStrategy strategy = (RoutingStrategy)clusterDefinition.getRoutingStrategy();
                   
-                  KeySource<?> keySource = clusterDefinition.getKeySource();
-                  if (keySource != null)
-                     container.setKeySource(keySource);
-
                   // there is only an inbound strategy if we have an Mp (that is, we aren't an adaptor) and
                   // we actually accept messages
                   if (messageProcessorPrototype != null && acceptedMessageClasses != null && acceptedMessageClasses.size() > 0)
                      strategyInbound = strategy.createInbound(clusterSession,currentClusterId,acceptedMessageClasses, thisDestination,container);
                   
+                  KeySource<?> keySource = clusterDefinition.getKeySource();
+                  if (keySource != null)
+                     container.setKeySource(keySource);
+
                   // this can fail because of down cluster manager server ... but it should eventually recover.
                   try { router.start(); }
                   catch (ClusterInfoException e)

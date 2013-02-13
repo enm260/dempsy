@@ -29,9 +29,14 @@ package com.nokia.dempsy.serialization;
  *
  * @param <T>
  */
-public interface Serializer<T> 
+public abstract class Serializer<T> 
 {
-   byte[] serialize(T object) throws SerializationException;
+   public abstract byte[] serialize(T object) throws SerializationException;
    
-   T deserialize(byte[] data) throws SerializationException;
+   public abstract T deserialize(byte[] data) throws SerializationException;
+   
+   public <E extends T> byte[] serialize(E object, Class<E> clazz) throws SerializationException { return serialize(object); }
+   
+   @SuppressWarnings("unchecked")
+   public <E extends T> E deserialize(byte[] data, Class<E> clazz) throws SerializationException { return (E)deserialize(data); }
 }

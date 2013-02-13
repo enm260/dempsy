@@ -28,6 +28,7 @@ import com.esotericsoftware.kryo.KryoException;
 import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
 import com.nokia.dempsy.internal.util.SafeString;
+import com.nokia.dempsy.router.DecentralizedRoutingStrategy.ShardInfo;
 import com.nokia.dempsy.serialization.SerializationException;
 import com.nokia.dempsy.serialization.Serializer;
 
@@ -36,7 +37,7 @@ import com.nokia.dempsy.serialization.Serializer;
  * It can be configured with registered classes using Spring by passing
  * a list of {@link Registration} instances to the constructor.
  */
-public class KryoSerializer<T> implements Serializer<T> 
+public class KryoSerializer<T> extends Serializer<T> 
 {
    private static Logger logger = LoggerFactory.getLogger(KryoSerializer.class);
    private static class KryoHolder
@@ -48,13 +49,17 @@ public class KryoSerializer<T> implements Serializer<T>
    // need an object pool of Kryo instances since Kryo is not thread safe
    private ConcurrentLinkedQueue<KryoHolder> kryopool = new ConcurrentLinkedQueue<KryoHolder>();
    private List<Registration> registrations = null;
-   private KryoOptimizer optimizer = null;
+   private ConcurrentLinkedQueue<KryoOptimizer> optimizer = new ConcurrentLinkedQueue<KryoOptimizer>();
    private boolean requireRegistration = false;
    
    /**
     * Create an unconfigured default {@link KryoSerializer} with no registered classes.
     */
-   public KryoSerializer() {}
+   public KryoSerializer()
+   {
+      // This is an ugly hack ... need to find a better way to do it
+      setKryoOptimizer(decentralizedRoutingStrategyShardInfoOptimizer);
+   }
    
    /**
     * Create an {@link KryoSerializer} with the provided registrations. This can be
@@ -62,6 +67,7 @@ public class KryoSerializer<T> implements Serializer<T>
     */
    public KryoSerializer(Registration... regs)
    {
+      setKryoOptimizer(decentralizedRoutingStrategyShardInfoOptimizer);
       registrations = Arrays.asList(regs); 
    }
    
@@ -71,17 +77,19 @@ public class KryoSerializer<T> implements Serializer<T>
     */
    public KryoSerializer(KryoOptimizer optimizer, Registration... regs)
    {
+      setKryoOptimizer(decentralizedRoutingStrategyShardInfoOptimizer);
       registrations = Arrays.asList(regs);
-      this.optimizer = optimizer;
+      this.optimizer.add(optimizer);
    }
    
    /**
     * Set the optimizer. This is provided for a dependency injection framework to use. If it's called
     * @param optimizer
     */
-   public synchronized void setKryoOptimizer(KryoOptimizer optimizer)
+   public synchronized void setKryoOptimizer(KryoOptimizer... optimizers)
    {
-      this.optimizer= optimizer;
+      for (KryoOptimizer cur : optimizers)
+         this.optimizer.add(cur);
       kryopool.clear(); // need to create new Kryo's.
    }
    
@@ -101,12 +109,61 @@ public class KryoSerializer<T> implements Serializer<T>
    @Override
    public byte[] serialize(T object) throws SerializationException 
    {
+      return doserialize(object,null);
+   }
+   
+   @Override
+   public T deserialize(byte[] data) throws SerializationException 
+   {
+      return dodeserialize(data,null);
+   }
+   
+   @Override
+   public <E extends T> byte[] serialize(E object, Class<E> clazz) throws SerializationException
+   {
+      return doserialize(object,clazz); 
+   }
+   
+   @SuppressWarnings("unchecked")
+   public <E extends T> E deserialize(byte[] data, Class<E> clazz) throws SerializationException
+   {
+      return (E)dodeserialize(data,clazz); 
+   }
+   
+   @SuppressWarnings("unchecked")
+   private T dodeserialize(byte[] data, Class<?> clazz ) throws SerializationException
+   {
+      KryoHolder k = null;
+      try
+      {
+         k = getKryoHolder();
+         k.input.setBuffer(data);
+         return (T)(clazz == null ? k.kryo.readClassAndObject(k.input) : k.kryo.readObject(k.input, clazz));  
+      }
+      catch (KryoException ke)
+      {
+         throw new SerializationException("Failed to deserialize.",ke);
+      }
+      catch (IllegalArgumentException e) // this happens when requiring registration but deserializing an unregistered class
+      {
+         throw new SerializationException("Failed to deserialize. Did you require registration and attempt to deserialize an unregistered class?", e);
+      }
+      finally
+      {
+         if (k != null)
+            kryopool.offer(k);
+      }
+   }
+   
+   private byte[] doserialize(T object, Class<?> clazz) throws SerializationException
+   {
       KryoHolder k = null;
       try
       {
          k = getKryoHolder();
          k.output.clear();
-         k.kryo.writeClassAndObject(k.output, object);
+         if (clazz == null) k.kryo.writeClassAndObject(k.output, object);
+         else k.kryo.writeObject(k.output,object);
          return k.output.toBytes();
       }
       catch (KryoException ke)
@@ -117,32 +174,6 @@ public class KryoSerializer<T> implements Serializer<T>
       {
          throw new SerializationException("Failed to serialize " + SafeString.objectDescription(object) + 
                " (did you require registration and attempt to serialize an unregistered class?)", e);
-      }
-      finally
-      {
-         if (k != null)
-            kryopool.offer(k);
-      }
-   }
-   
-   @SuppressWarnings("unchecked")
-   @Override
-   public T deserialize(byte[] data) throws SerializationException 
-   {
-      KryoHolder k = null;
-      try
-      {
-         k = getKryoHolder();
-         k.input.setBuffer(data);
-         return (T)(k.kryo.readClassAndObject(k.input));  
-      }
-      catch (KryoException ke)
-      {
-         throw new SerializationException("Failed to deserialize.",ke);
-      }
-      catch (IllegalArgumentException e) // this happens when requiring registration but deserializing an unregistered class
-      {
-         throw new SerializationException("Failed to deserialize. Did you require registration and attempt to deserialize an unregistered class?", e);
       }
       finally
       {
@@ -162,9 +193,12 @@ public class KryoSerializer<T> implements Serializer<T>
          
          if (optimizer != null)
          {
-            try { optimizer.preRegister(ret.kryo); }
-            catch (Throwable th) { logger.error("Optimizer for KryoSerializer \"" + SafeString.valueOfClass(optimizer) + 
-                  "\" threw and unepexcted exception.... continuing.",th); }
+            for (KryoOptimizer cur : optimizer)
+            {
+               try { cur.preRegister(ret.kryo); }
+               catch (Throwable th) { logger.error("Optimizer for KryoSerializer \"" + SafeString.valueOfClass(optimizer) + 
+                     "\" threw and unepexcted exception.... continuing.",th); }
+            }
          }
 
          if (registrations != null)
@@ -187,12 +221,38 @@ public class KryoSerializer<T> implements Serializer<T>
          
          if (optimizer != null)
          {
-            try { optimizer.postRegister(ret.kryo); }
-            catch (Throwable th) { logger.error("Optimizer for KryoSerializer \"" + SafeString.valueOfClass(optimizer) + 
-                  "\" threw and unepexcted exception.... continuing.",th); }
+            for (KryoOptimizer cur : optimizer)
+            {
+               try { cur.postRegister(ret.kryo); }
+               catch (Throwable th) { logger.error("Optimizer for KryoSerializer \"" + SafeString.valueOfClass(optimizer) + 
+                     "\" threw and unepexcted exception.... continuing.",th); }
+            }
          }
       }
       return ret;
    }
+   
+   private static KryoOptimizer decentralizedRoutingStrategyShardInfoOptimizer = new KryoOptimizer()
+   {
+      @Override
+      public void preRegister(Kryo kryo)
+      {
+         kryo.addDefaultSerializer(ShardInfo.class, new com.esotericsoftware.kryo.Serializer<ShardInfo>()
+         {
+            { this.setAcceptsNull(true); }
+            
+            @Override
+            public void write(Kryo kryo, Output output, ShardInfo object) { output.writeInt(object.getShard()); }
+
+            @Override
+            public ShardInfo read(Kryo kryo, Input input, Class<ShardInfo> type) { return new ShardInfo(input.readInt()); }
+         });
+      }
+      
+      @Override
+      public void postRegister(Kryo kryo) { }
+   };
+   
+
 
 }

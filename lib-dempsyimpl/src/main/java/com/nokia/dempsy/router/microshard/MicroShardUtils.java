@@ -28,17 +28,19 @@ public class MicroShardUtils
    
    private String appDir;
    private String clusterDir;
-   private String nodesDir;
    private String shardsDir;
-   private String transitionDir;
+   private String transitionRequestDir;
+   private String transitionOfferDir;
+   private String transitioningShardDir;
    
    public MicroShardUtils(ClusterId clusterId)
    {
       this.appDir = getAppRootDir() + "/" + clusterId.getApplicationName();
       this.clusterDir = getAppDir() + "/" + clusterId.getMpClusterName();
-      this.nodesDir = getClusterDir()+"/nodes";
       this.shardsDir = getClusterDir()+"/shards";
-      this.transitionDir = getClusterDir() + "/transition";
+      this.transitionRequestDir = getClusterDir() + "/transitionRequest";
+      this.transitionOfferDir = getClusterDir() + "/transitionOffer";
+      this.transitioningShardDir = getClusterDir() + "/transitioningShards";
    }
 
    /**
@@ -68,9 +70,12 @@ public class MicroShardUtils
     * an instance of a {@link DefaultShardInfo} which the manager will use to copy into 
     * the appropriate shardsDir subdirectory in order to accomplish an assignment.
     */
-   public String getNodesDir() { return nodesDir; }
    
-   public String getTransistionDir() { return transitionDir; }
+   public String getTransistionOfferDir() { return transitionOfferDir; }
+
+   public String getTransistionRequestDir() { return transitionRequestDir; }
+
+   public String getTransistioningShardDir() { return transitioningShardDir; }
 
    public String getShardsDir() { return shardsDir; }
 
@@ -102,8 +107,9 @@ public class MicroShardUtils
    {
       mkClusterDir(session,obj);
       session.mkdir(getShardsDir(), DirMode.PERSISTENT);
-      session.mkdir(getNodesDir(), DirMode.PERSISTENT);
-      session.mkdir(getTransistionDir(), DirMode.PERSISTENT);
+      session.mkdir(getTransistionRequestDir(), DirMode.PERSISTENT);
+      session.mkdir(getTransistionOfferDir(), DirMode.PERSISTENT);
+      session.mkdir(getTransistioningShardDir(), DirMode.PERSISTENT);
    }
    
    public void mkManagerDir(ClusterInfoSession session) throws ClusterInfoException

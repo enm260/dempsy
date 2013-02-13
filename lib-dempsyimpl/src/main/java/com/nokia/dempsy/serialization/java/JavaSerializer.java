@@ -26,12 +26,13 @@ import java.io.ObjectOutputStream;
 import com.nokia.dempsy.serialization.SerializationException;
 import com.nokia.dempsy.serialization.Serializer;
 
-public class JavaSerializer<T> implements Serializer<T> {
-
+public class JavaSerializer<T> extends Serializer<T> 
+{
    @Override
    public T deserialize(byte[] data) throws SerializationException 
    {
       ByteArrayInputStream bis = new ByteArrayInputStream(data);
+
       InputStream in;
       try
       {
@@ -48,6 +49,7 @@ public class JavaSerializer<T> implements Serializer<T> {
    public byte[] serialize(T object) throws SerializationException 
    {
       ByteArrayOutputStream bos = new ByteArrayOutputStream();
+      
       ObjectOutputStream out;
       try
       {
@@ -60,5 +62,5 @@ public class JavaSerializer<T> implements Serializer<T> {
       byte[] data = bos.toByteArray();
       return data;
    }
-
+   
 }
