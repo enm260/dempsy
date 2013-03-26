@@ -38,5 +38,13 @@ import java.lang.annotation.Target;
 @Inherited
 public @interface MessageProcessor
 {
+
+   /**
+    * Setting "pooled" allows for the instance of the message processor
+    * to be reused after passivation. This is obviously only useful for
+    * evictable message processors. {@code pooled} is defaulted to false.
+    */
+   boolean pooled() default false;
+   
    // nothing to see here, move along
 }
