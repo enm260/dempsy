@@ -46,6 +46,7 @@ import com.nokia.dempsy.container.MpContainer;
 import com.nokia.dempsy.container.internal.AnnotatedMethodInvoker;
 import com.nokia.dempsy.internal.util.SafeString;
 import com.nokia.dempsy.message.MessageBufferOutput;
+import com.nokia.dempsy.message.MessageDispatchOutgoingInterceptor;
 import com.nokia.dempsy.messagetransport.Destination;
 import com.nokia.dempsy.messagetransport.MessageTransportException;
 import com.nokia.dempsy.messagetransport.Sender;
@@ -84,16 +85,16 @@ import com.nokia.dempsy.serialization.Serializer;
  * 
  * <p>A router requires a non-null ApplicationDefinition during construction.</p>
  */
-public class Router implements Dispatcher, RoutingStrategy.OutboundManager.ClusterStateMonitor
+public class Router implements Dispatcher //, RoutingStrategy.OutboundManager.ClusterStateMonitor
 {
    private static Logger logger = LoggerFactory.getLogger(Router.class);
 
    private AnnotatedMethodInvoker methodInvoker = new AnnotatedMethodInvoker(MessageKey.class);
    private ClusterDefinition currentClusterDefinition = null;
 
-   protected RoutingStrategy.OutboundManager outboundManager = null;
+   protected MessageDispatchOutgoingInterceptor sender = null;
    
-   private ClusterInfoSession mpClusterSession = null;
+//   private ClusterInfoSession mpClusterSession = null;
    private SenderFactory senderFactory;
    private StatsCollector statsCollector = null;
    private Serializer<Object> serializer;
@@ -110,15 +111,10 @@ public class Router implements Dispatcher, RoutingStrategy.OutboundManager.Clust
       this.serializer = (Serializer<Object>)currentClusterDefinition.getSerializer();
    }
 
-   /**
-    * Provide the handle to the cluster factory so that each visible cluster can be reached.
-    */
-   public void setClusterSession(ClusterInfoSession factory) { mpClusterSession = factory; }
-   
-   /**
-    * @return a reference to the set ClusterInfoSession
-    */
-   public ClusterInfoSession getClusterSession() { return mpClusterSession; }
+//   /**
+//    * Provide the handle to the cluster factory so that each visible cluster can be reached.
+//    */
+//   public void setClusterSession(ClusterInfoSession factory) { mpClusterSession = factory; }
    
    /**
     * This sets the default {@link Transport} to use for each cluster a message may be routed to.
@@ -131,20 +127,20 @@ public class Router implements Dispatcher, RoutingStrategy.OutboundManager.Clust
     */
    public void setStatsCollector(StatsCollector statsCollector) { this.statsCollector = statsCollector; }
    
-   /**
-    * Prior to the {@link Router} being used it needs to be initialized.
-    */
-   public void start() throws ClusterInfoException,DempsyException
-   {
-      // get the set of explicit destinations if they exist
-      Set<ClusterId> explicitClusterDestinations = currentClusterDefinition.hasExplicitDestinations() ? new HashSet<ClusterId>() : null;
-      if (explicitClusterDestinations != null)
-         explicitClusterDestinations.addAll(Arrays.asList(currentClusterDefinition.getDestinations()));
-      
-      RoutingStrategy strategy = (RoutingStrategy)currentClusterDefinition.getRoutingStrategy();
-      outboundManager = strategy.createOutboundManager(mpClusterSession, currentClusterDefinition.getClusterId(), explicitClusterDestinations);
-      outboundManager.setClusterStateMonitor(this);
-   }
+//   /**
+//    * Prior to the {@link Router} being used it needs to be initialized.
+//    */
+//   public void start() throws ClusterInfoException,DempsyException
+//   {
+//      // get the set of explicit destinations if they exist
+//      Set<ClusterId> explicitClusterDestinations = currentClusterDefinition.hasExplicitDestinations() ? new HashSet<ClusterId>() : null;
+//      if (explicitClusterDestinations != null)
+//         explicitClusterDestinations.addAll(Arrays.asList(currentClusterDefinition.getDestinations()));
+//      
+//      RoutingStrategy strategy = (RoutingStrategy)currentClusterDefinition.getRoutingStrategy();
+//      outboundManager = strategy.createOutboundManager(mpClusterSession, currentClusterDefinition.getClusterId(), explicitClusterDestinations);
+//      outboundManager.setClusterStateMonitor(this);
+//   }
    
    @Override
    public ClusterId getThisClusterId() { return currentClusterDefinition.getClusterId(); }
@@ -211,17 +207,18 @@ public class Router implements Dispatcher, RoutingStrategy.OutboundManager.Clust
       
       if(msgKeysValue != null)
       {
-         Collection<RoutingStrategy.Outbound> routers = outboundManager.retrieveOutbounds(msg.getClass());
-         if(routers != null && routers.size() > 0)
-         {
-            for(Outbound router: routers)
-               route(router, msgKeysValue,msg);
-         }
-         else
-         {
-            if (statsCollector != null) statsCollector.messageNotSent(msg);
-            logger.warn("No router found for message type \""+ SafeString.objectDescription(msg) + "\"");
-         }
+         sender.dispatch(msg, msgKeysValue, null);
+//         Collection<RoutingStrategy.Outbound> routers = outboundManager.retrieveOutbounds(msg.getClass());
+//         if(routers != null && routers.size() > 0)
+//         {
+//            for(Outbound router: routers)
+//               route(router, msgKeysValue,msg);
+//         }
+//         else
+//         {
+//            if (statsCollector != null) statsCollector.messageNotSent(msg);
+//            logger.warn("No router found for message type \""+ SafeString.objectDescription(msg) + "\"");
+//         }
       }
       else
       {
@@ -231,106 +228,106 @@ public class Router implements Dispatcher, RoutingStrategy.OutboundManager.Clust
 
    }
    
-   @Override
-   public void clusterStateChanged(RoutingStrategy.Outbound outbound)
-   {
-      try
-      {
-         Collection<Destination> destinations = outbound.getKnownDestinations();
-         if (destinations == null)
-            return;
-         for (Destination d : destinations)
-         {
-            try { senderFactory.stopDestination(d); }
-            catch (Throwable th)
-            {
-               logger.error("Trouble shutting down the destination " + SafeString.objectDescription(d),th);
-            }
-         }
-      }
-      catch (Throwable th)
-      {
-         logger.error("Unknown exception trying to clean up after a cluster state change for "+ outbound.getClusterId() +  
-               " from  " + currentClusterDefinition.getClusterId(),th);
-      }
-   }
+//   @Override
+//   public void clusterStateChanged(RoutingStrategy.Outbound outbound)
+//   {
+//      try
+//      {
+//         Collection<Destination> destinations = outbound.getKnownDestinations();
+//         if (destinations == null)
+//            return;
+//         for (Destination d : destinations)
+//         {
+//            try { senderFactory.stopDestination(d); }
+//            catch (Throwable th)
+//            {
+//               logger.error("Trouble shutting down the destination " + SafeString.objectDescription(d),th);
+//            }
+//         }
+//      }
+//      catch (Throwable th)
+//      {
+//         logger.error("Unknown exception trying to clean up after a cluster state change for "+ outbound.getClusterId() +  
+//               " from  " + currentClusterDefinition.getClusterId(),th);
+//      }
+//   }
    
-   public void stop()
-   {
-      if (outboundManager != null)
-      {
-         try { outboundManager.stop(); }
-         catch (Throwable th)
-         {
-            logger.error("Stopping the Outbound Manager " + SafeString.objectDescription(outboundManager) + " caused an exception:", th);
-         }
-      }
-      
-      // stop the MpClusterSession first so that ClusterRouters wont
-      //  be notified after their stopped.
-      try { if(mpClusterSession != null) mpClusterSession.stop(); }
-      catch(Throwable th) 
-      {
-         logger.error("Stopping the cluster session " + SafeString.objectDescription(mpClusterSession) + " caused an exception:", th);
-      }
-   }
+//   public void stop()
+//   {
+//      if (outboundManager != null)
+//      {
+//         try { outboundManager.stop(); }
+//         catch (Throwable th)
+//         {
+//            logger.error("Stopping the Outbound Manager " + SafeString.objectDescription(outboundManager) + " caused an exception:", th);
+//         }
+//      }
+//      
+//      // stop the MpClusterSession first so that ClusterRouters wont
+//      //  be notified after their stopped.
+//      try { if(mpClusterSession != null) mpClusterSession.stop(); }
+//      catch(Throwable th) 
+//      {
+//         logger.error("Stopping the cluster session " + SafeString.objectDescription(mpClusterSession) + " caused an exception:", th);
+//      }
+//   }
 
-   /**
-    * Returns whether or not the message was actually sent. Doesn't touch the statsCollector
-    */
-   public boolean route(Outbound strategyOutbound, Object key, Object message)
-   {
-      boolean messageFailed = true;
-      Sender sender = null;
-      try
-      {
-         MessageBufferOutput os = senderFactory.prepareMessage();
-         Destination destination = strategyOutbound.selectDestinationForMessage(key, message);
-
-         if (destination == null)
-         {
-            if (logger.isInfoEnabled())
-               logger.info("Couldn't find a destination for " + SafeString.objectDescription(message));
-            if (statsCollector != null) statsCollector.messageNotSent(message);
-            return false;
-         }
-
-         sender = senderFactory.getSender(destination);
-         if (sender == null)
-            logger.error("Couldn't figure out a means to send " + SafeString.objectDescription(message) +
-                  " to " + SafeString.valueOf(destination) + "");
-         else
-         {
-            serializer.serialize(message,os);
-            sender.send(os); // the sender is assumed to increment the stats collector.
-            messageFailed = false;
-         }
-      }
-      catch(DempsyException e)
-      {
-         logger.info("Failed to determine the destination for " + SafeString.objectDescription(message) + 
-               " using the routing strategy " + SafeString.objectDescription(strategyOutbound),e);
-      }
-      catch (SerializationException e)
-      {
-         logger.error("Failed to serialize " + SafeString.objectDescription(message) + 
-               " using the serializer " + SafeString.objectDescription(serializer),e);
-      }
-      catch (MessageTransportException e)
-      {
-         logger.warn("Failed to send " + SafeString.objectDescription(message) + 
-               " using the sender " + SafeString.objectDescription(sender),e);
-      }
-      catch (Throwable e)
-      {
-         logger.error("Failed to send " + SafeString.objectDescription(message) + 
-               " using the serializer " + SafeString.objectDescription(serializer) +
-               "\" and using the sender " + SafeString.objectDescription(sender),e);
-      }
-      if (messageFailed)
-         statsCollector.messageNotSent(message);
-      return !messageFailed;
-   }
+//   /**
+//    * Returns whether or not the message was actually sent. Doesn't touch the statsCollector
+//    */
+//   public boolean route(Outbound strategyOutbound, Object key, Object message)
+//   {
+//      boolean messageFailed = true;
+//      Sender sender = null;
+//      try
+//      {
+//         MessageBufferOutput os = senderFactory.prepareMessage();
+//         Destination destination = strategyOutbound.selectDestinationForMessage(key, message);
+//
+//         if (destination == null)
+//         {
+//            if (logger.isInfoEnabled())
+//               logger.info("Couldn't find a destination for " + SafeString.objectDescription(message));
+//            if (statsCollector != null) statsCollector.messageNotSent(message);
+//            return false;
+//         }
+//
+//         sender = senderFactory.getSender(destination);
+//         if (sender == null)
+//            logger.error("Couldn't figure out a means to send " + SafeString.objectDescription(message) +
+//                  " to " + SafeString.valueOf(destination) + "");
+//         else
+//         {
+//            serializer.serialize(message,os);
+//            sender.send(os); // the sender is assumed to increment the stats collector.
+//            messageFailed = false;
+//         }
+//      }
+//      catch(DempsyException e)
+//      {
+//         logger.info("Failed to determine the destination for " + SafeString.objectDescription(message) + 
+//               " using the routing strategy " + SafeString.objectDescription(strategyOutbound),e);
+//      }
+//      catch (SerializationException e)
+//      {
+//         logger.error("Failed to serialize " + SafeString.objectDescription(message) + 
+//               " using the serializer " + SafeString.objectDescription(serializer),e);
+//      }
+//      catch (MessageTransportException e)
+//      {
+//         logger.warn("Failed to send " + SafeString.objectDescription(message) + 
+//               " using the sender " + SafeString.objectDescription(sender),e);
+//      }
+//      catch (Throwable e)
+//      {
+//         logger.error("Failed to send " + SafeString.objectDescription(message) + 
+//               " using the serializer " + SafeString.objectDescription(serializer) +
+//               "\" and using the sender " + SafeString.objectDescription(sender),e);
+//      }
+//      if (messageFailed)
+//         statsCollector.messageNotSent(message);
+//      return !messageFailed;
+//   }
    
    protected void getMessages(Object message, List<Object> messages)
    {
