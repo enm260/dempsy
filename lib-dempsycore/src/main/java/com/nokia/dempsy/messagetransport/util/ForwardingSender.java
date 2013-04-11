@@ -16,6 +16,7 @@
 
 package com.nokia.dempsy.messagetransport.util;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
@@ -71,12 +72,20 @@ public class ForwardingSender implements Sender
    
    public SenderConnection getConnection() { return connection; }
    
+   private static final AtomicInteger enqueuedSequence = new AtomicInteger(0);
+   
    public final class Enqueued
    {
       public final MessageBufferOutput message;
       public final int numBytes;
+      public final int sequence;
       
-      public Enqueued(MessageBufferOutput message) { this.message = message; this.numBytes = message.getPosition(); }
+      public Enqueued(MessageBufferOutput message) 
+      {
+         this.message = message;
+         this.numBytes = message.getPosition();
+         this.sequence = enqueuedSequence.incrementAndGet();
+      }
       
       public final void messageNotSent() { if (statsCollector != null) statsCollector.messageNotSent(message.getBuffer()); }
       public final void messageSent() { if (statsCollector != null) statsCollector.messageSent(numBytes); }
@@ -84,14 +93,16 @@ public class ForwardingSender implements Sender
    }
    
    @Override
-   public void send(MessageBufferOutput buffer) throws MessageTransportException
+   public int send(MessageBufferOutput buffer) throws MessageTransportException
    {
-      try { connection.getQ().put(new Enqueued(buffer)); }
+      final Enqueued queued = new Enqueued(buffer);
+      try { connection.getQ().put(queued); }
       catch (InterruptedException e)
       {
          if (statsCollector != null) statsCollector.messageNotSent(buffer.getBuffer());
          throw new MessageTransportException("Failed to enqueue message to " + destination + ".",e);
       }
+      return queued.sequence;
    }
    
    @Override

@@ -21,8 +21,8 @@ import com.nokia.dempsy.message.MessageBufferInput;
 
 /**
  * <p>This is the core abstraction for receiving messages. The client side of
- * a transport implementation (called an "Adaptor") needs to be wired to a 
- * MessageTransportListener</p>
+ * a transport (the {@link Receiver}) implementation needs to be wired to a 
+ * Listener</p>
  */
 public interface Listener
 {
