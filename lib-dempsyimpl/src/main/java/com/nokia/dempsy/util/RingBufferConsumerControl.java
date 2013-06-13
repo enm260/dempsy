@@ -146,6 +146,12 @@ public abstract class RingBufferConsumerControl
    
    // Accessed ONLY on the consumer side.
    private final PaddedLong consumerTailCache = new PaddedLong(INITIAL_CURSOR_VALUE);
+   
+   private final PaddedLong headCache = new PaddedLong(INITIAL_CURSOR_VALUE);
+   
+   // This value holds this consumers former return value for a call to 
+   // either availableTo or tryAvailableTo. This is then used in the notifyProcessed.
+   private final PaddedLong previousAvailableToResult = new PaddedLong(INITIAL_CURSOR_VALUE);
 
 //   private final Object obj0 = null;
    
@@ -179,23 +185,16 @@ public abstract class RingBufferConsumerControl
     */
    public long availableTo()
    {
-      final long ret = waitStrategy.waitFor(consumerTailCache.get() + 1L,publishCursor);
-      if (stop.get() == ret)
-      {
-         // this is a rare condition (compared to the else clause).
-         
-         // if we stopped but there's still values in the queue
-         // then pass back everything but the stop, we'll get that
-         // next time around.
-         if (ret > (consumerTailCache.get() + 1L))
-            return ret - 1L;
-
-         notifyProcessed(ret);
-         clear();
-         return ACQUIRE_STOP_REQUEST;
-      }
-      else
-         return ret;
+      return availableTo(consumerTailCache.get() + 1L);
+   }
+   
+   protected long availableTo(final long requestedSequence)
+   {
+      final long lastKnownHead = headCache.get();
+      if (lastKnownHead >= requestedSequence)
+         return lastKnownHead;
+      
+      return doAvailableTo(waitStrategy.waitFor(requestedSequence,publishCursor),requestedSequence);
    }
    
    /**
@@ -206,35 +205,64 @@ public abstract class RingBufferConsumerControl
     */
    public long tryAvailableTo()
    {
+      return tryAvailableTo(consumerTailCache.get() + 1L);
+   }
+   
+   protected long tryAvailableTo(final long requestedSequence)
+   {   
+      final long lastKnownHead = headCache.get();
+      if (lastKnownHead >= requestedSequence)
+         return lastKnownHead;
+
       final long availableSequence = publishCursor.get();
-      if (availableSequence < consumerTailCache.get() + 1L)
+      if (availableSequence < requestedSequence)
+      {
+         headCache.set(availableSequence);
          return UNAVAILABLE;
-      if (stop.get() == availableSequence)
+      }
+
+      return doAvailableTo(availableSequence,requestedSequence);
+   }
+   
+   private final long doAvailableTo(final long availableSequence, final long requestedSequence)
+   {
+      if (stop.get() <= availableSequence) // the lt part of this is for the Worker impl.
       {
          // this is a rare condition (compared to the else clause).
 
          // if we stopped but there's still values in the queue
          // then pass back everything but the stop, we'll get that
          // next time around.
-         if (availableSequence > (consumerTailCache.get() + 1L))
-            return availableSequence - 1L;
+         if (stop.get() > requestedSequence)
+         {
+            final long ret1 = stop.get() - 1L;
+            previousAvailableToResult.set(ret1);
+            return ret1;
+         }
          
-         notifyProcessed(availableSequence);
+         doNotifyProcessed(availableSequence);
          clear();
          return ACQUIRE_STOP_REQUEST;
       }
       else
+      {
+         previousAvailableToResult.set(availableSequence);
+         headCache.set(availableSequence);
          return availableSequence;
+      }
    }
    
    /**
     * This method must be called by the consumer once the consumer is finished with 
-    * the currently published results. The value provided should be the value returned
-    * from {@link RingBufferControl#availableTo()} or {@link RingBufferControl#tryAvailableTo()},
-    * however, do not pass {@link RingBufferControl#UNAVAILABLE} or 
-    * {@link RingBufferControl#ACQUIRE_STOP_REQUEST}.
+    * the currently published results.
     */
-   public void notifyProcessed(final long sequence) { tail.set(sequence); consumerTailCache.set(sequence); }
+   public void notifyProcessed() { doNotifyProcessed(previousAvailableToResult.get()); }
+   
+   protected final void doNotifyProcessed(final long sequence)
+   {
+      tail.set(sequence);
+      consumerTailCache.set(sequence);
+   }
    
    /**
     * This method will convert the sequence to an index of a ring buffer. 
@@ -266,6 +294,8 @@ public abstract class RingBufferConsumerControl
       // publish side can see that it's been shut down. So we do it last.
       tail.set(INITIAL_CURSOR_VALUE);
       consumerTailCache.set(INITIAL_CURSOR_VALUE);
+      headCache.set(INITIAL_CURSOR_VALUE);
+      previousAvailableToResult.set(INITIAL_CURSOR_VALUE); // reset the previousAvailableToResult
    }
 
 }

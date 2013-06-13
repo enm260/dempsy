@@ -28,6 +28,7 @@ import com.nokia.dempsy.messagetransport.Listener;
 import com.nokia.dempsy.messagetransport.MessageTransportException;
 import com.nokia.dempsy.messagetransport.Receiver;
 import com.nokia.dempsy.monitoring.StatsCollector;
+import com.nokia.dempsy.util.PaddedCount;
 
 public class ForwardedReceiver implements Receiver
 {
@@ -84,15 +85,19 @@ public class ForwardedReceiver implements Receiver
       {
          try
          {
-            executor.submitLimited(new DempsyExecutor.Rejectable<Object>()
+            executor.processMessage(new DempsyExecutor.Rejectable()
             {
-               MessageBufferInput message = msg;
+               final MessageBufferInput message = msg;
 
                @Override
-               public Object call() throws Exception
+               public void run()
                {
-                  /*boolean messageSuccess = */messageTransportListener.onMessage( message, failFast );
-                  return null;
+                  try { messageTransportListener.onMessage( message, failFast ); }
+                  catch (Throwable th) 
+                  {
+                     if (statsCollector != null) statsCollector.messageFailed(true);
+                     logger.error(SafeString.objectDescription(messageTransportListener) + " failed to process message.",th);
+                  }
                }
 
                @Override

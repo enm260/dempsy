@@ -1,7 +1,6 @@
 package com.nokia.dempsy.executor;
 
 import java.util.concurrent.Callable;
-import java.util.concurrent.Future;
 
 /**
  * <p>The Threading model for Dempsy needs to work in close concert with the
@@ -12,7 +11,7 @@ import java.util.concurrent.Future;
  */
 public interface DempsyExecutor
 {
-   public static interface Rejectable<V> extends Callable<V>
+   public static interface Rejectable extends Runnable
    {
       public void rejected();
    }
@@ -22,24 +21,24 @@ public interface DempsyExecutor
     * this method acts like the {@link Callable} was added to an unbounded queue
     * and so should eventually execute.
     */
-   public <V> Future<V> submit(Callable<V> r);
+   public void submit(Runnable r);
    
    /**
     * This method queues {@link Callable}s that can expire or have some
     * maximum number allowed. Normal message processing falls into this 
     * category since 'shedding' is the standard behavior.
     */
-   public <V> Future<V> submitLimited(Rejectable<V> r);
+   public void processMessage(Rejectable r);
    
    /**
     * How many pending tasks are there.
     */
    public int getNumberPending();
    
-   /**
-    * How many pending limited tasks are there
-    */
-   public int getNumberLimitedPending();
+//   /**
+//    * How many pending limited tasks are there
+//    */
+//   public int getNumberLimitedPending();
    
    /**
     * Start up the executor. This method must be implemented

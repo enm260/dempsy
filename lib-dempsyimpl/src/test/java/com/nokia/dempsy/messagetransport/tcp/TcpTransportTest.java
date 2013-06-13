@@ -1106,7 +1106,7 @@ public class TcpTransportTest
 
                // wait until all Listeners are in and all threads enqueued. This is the totally full state.
                assertTrue(TestUtils.poll(baseTimeoutMillis, ((DefaultDempsyExecutor)adaptor.getExecutor()), new TestUtils.Condition<DefaultDempsyExecutor>() 
-                     { @Override public boolean conditionMet(DefaultDempsyExecutor o) { return o.getNumberLimitedPending() == o.getMaxNumberOfQueuedLimitedTasks(); } }));
+                     { @Override public boolean conditionMet(DefaultDempsyExecutor o) { return o.getNumberPending() == o.getMaxNumberOfQueuedLimitedTasks(); } }));
 
                assertEquals(0,statsCollector.getDiscardedMessageCount());
                

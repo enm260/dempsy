@@ -229,7 +229,7 @@ public class RingBufferControlMultiplexor
     * <p>This method MUST be called prior to a subsequent call to either of the {@code acquireTo}
     * methods.</p>
     */
-   public void notifyProcessed(final long seq) { curRingBuffer.notifyProcessed(seq); }
+   public void notifyProcessed() { curRingBuffer.notifyProcessed(); }
    
    /**
     * This method will convert the sequence to an index of a ring buffer. 

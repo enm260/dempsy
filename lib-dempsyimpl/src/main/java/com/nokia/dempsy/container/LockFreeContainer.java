@@ -58,13 +58,13 @@ import com.nokia.dempsy.serialization.Serializer;
 import com.nokia.dempsy.util.RunningEventSwitch;
 
 /**
- *  <p>The {@link MpContainer} manages the lifecycle of message processors for the
+ *  <p>The {@link LockFreeContainer} manages the lifecycle of message processors for the
  *  node that it's instantiated in.</p>
  *  
  *  The container is simple in that it does no thread management. When it's called 
  *  it assumes that the transport has provided the thread that's needed 
  */
-public class MpContainer implements Container, ContainerTestAccess
+public class LockFreeContainer implements Container, ContainerTestAccess
 {
    private Logger logger = LoggerFactory.getLogger(getClass());
 
@@ -102,7 +102,7 @@ public class MpContainer implements Container, ContainerTestAccess
    
    public RoutingStrategy.Inbound strategyInbound = null;
 
-   public MpContainer(ClusterId clusterId) { this.clusterId = clusterId; }
+   public LockFreeContainer(ClusterId clusterId) { this.clusterId = clusterId; }
 
    //----------------------------------------------------------------------------
    //  Configuration

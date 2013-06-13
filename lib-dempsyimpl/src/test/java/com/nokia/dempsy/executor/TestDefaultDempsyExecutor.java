@@ -3,8 +3,6 @@ package com.nokia.dempsy.executor;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
-import java.util.concurrent.Callable;
-import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -12,10 +10,11 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import com.lmax.disruptor.util.PaddedLong;
 import com.nokia.dempsy.TestUtils;
 import com.nokia.dempsy.executor.DempsyExecutor.Rejectable;
 
-public class TestDempsyExecutor
+public class TestDefaultDempsyExecutor
 {
    private static long baseTimeoutMillis = 20000;
 
@@ -37,7 +36,9 @@ public class TestDempsyExecutor
       executor = null;
    }
    
-   public class Task implements Rejectable<Boolean>
+   final PaddedLong result = new PaddedLong(0);
+   
+   public class Task implements Rejectable
    {
       final AtomicBoolean latch;
       final AtomicLong count;
@@ -45,7 +46,7 @@ public class TestDempsyExecutor
       Task(AtomicBoolean latch, AtomicLong count) { this.latch = latch; this.count = count; }
       
       @Override
-      public Boolean call() throws Exception
+      public void run()
       {
          if (latch != null)
          {
@@ -57,7 +58,8 @@ public class TestDempsyExecutor
          }
          
          if (count != null) count.incrementAndGet();
-         return true;
+         
+         result.set(result.get() + 1L);
       }
 
       @Override
@@ -72,15 +74,22 @@ public class TestDempsyExecutor
    @Test
    public void testSimple() throws Throwable
    {
+      result.set(0);
       executor.start();
       
       Task task = new Task(null,null);
-      Future<Boolean> result = executor.submit(task);
+      executor.submit(task);
       
-      assertTrue(result.get().booleanValue());
+      assertTrue(TestUtils.poll(baseTimeoutMillis, result, new TestUtils.Condition<PaddedLong>()
+      {
+         @Override public boolean conditionMet(PaddedLong o) { return 1L == result.get(); }
+      }));
       
-      result = executor.submitLimited(task);
-      assertTrue(result.get().booleanValue());
+      executor.processMessage(task);
+      assertTrue(TestUtils.poll(baseTimeoutMillis, result, new TestUtils.Condition<PaddedLong>()
+      {
+         @Override public boolean conditionMet(PaddedLong o) { return 2L == result.get(); }
+      }));
    }
    
    @Test
@@ -97,11 +106,11 @@ public class TestDempsyExecutor
 
          // submit a limited task for every thread.
          for (int i = 0; i < numThreads; i++)
-            executor.submitLimited(task);
+            executor.processMessage(task);
 
          // submit twice as many.
          for (int i = 0; i < numThreads; i++)
-            executor.submitLimited(task);
+            executor.processMessage(task);
 
          // none should be rejected yet.
          assertEquals(0,numRejected.get());
@@ -111,7 +120,7 @@ public class TestDempsyExecutor
          {  @Override 
             public boolean conditionMet(Task task) throws Throwable
             {
-               executor.submitLimited(task); executor.submitLimited(task);executor.submitLimited(task);
+               executor.processMessage(task); executor.processMessage(task);executor.processMessage(task);
                synchronized(task.latch) { task.latch.set(true); task.latch.notify(); }
                return numRejected.get() > 0;
             }
@@ -141,14 +150,14 @@ public class TestDempsyExecutor
 
          // submit a limited task for every thread.
          for (int i = 0; i < numThreads; i++)
-            executor.submitLimited(blockingTask);
+            executor.processMessage(blockingTask);
 
          // none should be queued
          Thread.sleep(10);
          assertEquals(0,executor.getNumberPending());
          
          // now submit one more
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // now the pending tasks should go to one.
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -166,7 +175,7 @@ public class TestDempsyExecutor
          assertEquals(1,executor.getNumberLimitedPending());
 
          // now I should be able to submit a non-limited and it should wait.
-         executor.submit(new Callable<Object>() { @Override public Object call() { return null; } });
+         executor.submit(new Runnable() { @Override public void run() { } });
 
          // now the pending tasks should go to two.
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -185,7 +194,7 @@ public class TestDempsyExecutor
 
          // now I should be able to overflow it. This should move the number pending right to the max allowed
          for (int i = 1; i < maxQueued; i++)
-            executor.submitLimited(nonblockingTask);
+            executor.processMessage(nonblockingTask);
 
          // now the number limited pending should be the maxQueued
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -198,7 +207,7 @@ public class TestDempsyExecutor
          // The queue math is conservative and can handle one more before it would actually throw any away.
          // This is because the counter is decremented and then compared 'less than or equal to' with the
          // max. If this test ever fails below this point, please review that this is still the case.
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // let them all go.
          synchronized(latch) { latch.set(true);  latch.notifyAll(); }
@@ -240,14 +249,14 @@ public class TestDempsyExecutor
 
          // submit a limited task for every thread.
          for (int i = 0; i < numThreads; i++)
-            executor.submitLimited(blockingTask);
+            executor.processMessage(blockingTask);
 
          // none should be queued
          Thread.sleep(10);
          assertEquals(0,executor.getNumberPending());
          
          // now submit one more
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // now the pending tasks should go to one.
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -265,7 +274,7 @@ public class TestDempsyExecutor
          assertEquals(1,executor.getNumberLimitedPending());
 
          // now I should be able to submit a non-limited and it should wait.
-         executor.submit(new Callable<Object>() { @Override public Object call() { return null; } });
+         executor.submit(new Runnable() { @Override public void run() {  } });
 
          // now the pending tasks should go to two.
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -284,7 +293,7 @@ public class TestDempsyExecutor
 
          // now I should be able to overflow it. This should move the number pending right to the max allowed
          for (int i = 1; i < maxQueued; i++)
-            executor.submitLimited(nonblockingTask);
+            executor.processMessage(nonblockingTask);
 
          // now the number limited pending should be the maxQueued
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -297,7 +306,7 @@ public class TestDempsyExecutor
          // The queue math is conservative and can handle one more before it would actually throw any away.
          // This is because the counter is decremented and then compared 'less than or equal to' with the
          // max. If this test ever fails below this point, please review that this is still the case.
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // submit another that will block so we need to do it in another thread
          final AtomicLong pos = new AtomicLong(0);
@@ -306,7 +315,7 @@ public class TestDempsyExecutor
             @Override public void run() 
             {
                pos.incrementAndGet();
-               executor.submitLimited(nonblockingTask);
+               executor.processMessage(nonblockingTask);
                pos.incrementAndGet();
             }
          });
@@ -365,11 +374,11 @@ public class TestDempsyExecutor
 
          // submit a limited task for every thread.
          for (int i = 0; i < numThreads; i++)
-            executor.submitLimited(blockingTask);
+            executor.processMessage(blockingTask);
 
          // now I should be able to overflow it. This should move the number pending right to the max allowed
          for (int i = 0; i < maxQueued; i++)
-            executor.submitLimited(nonblockingTask);
+            executor.processMessage(nonblockingTask);
 
          // now the number limited pending should be the maxQueued
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -382,7 +391,7 @@ public class TestDempsyExecutor
          // The queue math is conservative and can handle one more before it would actually throw any away.
          // This is because the counter is decremented and then compared 'less than or equal to' with the
          // max. If this test ever fails below this point, please review that this is still the case.
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // submit another that will block so we need to do it in another thread
          final AtomicLong pos = new AtomicLong(0);
@@ -391,7 +400,7 @@ public class TestDempsyExecutor
             @Override public void run() 
             {
                pos.incrementAndGet();
-               try { executor.submitLimited(nonblockingTask); }
+               try { executor.processMessage(nonblockingTask); }
                catch (RuntimeException re) { /* we expect a runtime exception since the executor will be shut down */ }
                finally { pos.incrementAndGet(); }
             }
@@ -457,7 +466,7 @@ public class TestDempsyExecutor
 
          // submit a limited task for every thread.
          for (int i = 0; i < numThreads; i++)
-            executor.submitLimited(blockingTask);
+            executor.processMessage(blockingTask);
 
          // none should be queued
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -468,7 +477,7 @@ public class TestDempsyExecutor
          }));
 
          // now submit one more
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // now the pending tasks should go to one.
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -487,7 +496,7 @@ public class TestDempsyExecutor
          assertEquals(0,executor.getNumberLimitedPending());
 
          // now I should be able to submit a non-limited and it should wait.
-         executor.submit(new Callable<Object>() { @Override public Object call() { return null; } });
+         executor.submit(new Runnable() { @Override public void run() { } });
 
          // now the pending tasks should go to one.
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -506,16 +515,16 @@ public class TestDempsyExecutor
 
          // now I should be able to overflow it. This should move the number pending right to the max allowed
          for (int i = 1; i < maxQueued; i++)
-            executor.submitLimited(nonblockingTask);
+            executor.processMessage(nonblockingTask);
 
          // The queue math is conservative and can handle one more before it would actually throw any away.
          // This is because the counter is decremented and then compared 'less than or equal to' with the
          // max. If this test ever fails below this point, please review that this is still the case.
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // now if I add one more, normally I should see exactly one discard.
          // with unlimited set I should see none.
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // let them all go.
          synchronized(latch) { latch.set(true);  latch.notifyAll(); }
@@ -557,7 +566,7 @@ public class TestDempsyExecutor
 
          // submit a limited task for every thread.
          for (int i = 0; i < numThreads; i++)
-            executor.submitLimited(blockingTask);
+            executor.processMessage(blockingTask);
 
          // none should be queued
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -568,7 +577,7 @@ public class TestDempsyExecutor
          }));
 
          // now submit one more
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // now the pending tasks should go to one.
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -586,7 +595,7 @@ public class TestDempsyExecutor
          assertEquals(1,executor.getNumberLimitedPending());
 
          // now I should be able to submit a non-limited and it should wait.
-         executor.submit(new Callable<Object>() { @Override public Object call() { return null; } });
+         executor.submit(new Runnable() { @Override public void run() { } });
 
          // now the pending tasks should go to one.
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -605,7 +614,7 @@ public class TestDempsyExecutor
 
          // now I should be able to overflow it. This should move the number pending right to the max allowed
          for (int i = 1; i < maxQueued; i++)
-            executor.submitLimited(nonblockingTask);
+            executor.processMessage(nonblockingTask);
 
          // now the number limited pending should be the maxQueued
          assertTrue(TestUtils.poll(baseTimeoutMillis, executor, new TestUtils.Condition<DefaultDempsyExecutor>() {
@@ -618,10 +627,10 @@ public class TestDempsyExecutor
          // The queue math is conservative and can handle one more before it would actually throw any away.
          // This is because the counter is decremented and then compared 'less than or equal to' with the
          // max. If this test ever fails below this point, please review that this is still the case.
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // now if I add one more I should see exactly one discard.
-         executor.submitLimited(nonblockingTask);
+         executor.processMessage(nonblockingTask);
 
          // let them all go.
          synchronized(latch) { latch.set(true); latch.notifyAll(); }

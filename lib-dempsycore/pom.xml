@@ -12,6 +12,10 @@
    <name>Distributed Message Processing Framework - Core Internal Api</name>
 
    <dependencies>
+    <dependency>
+      <groupId>com.googlecode.disruptor</groupId>
+      <artifactId>disruptor</artifactId>
+    </dependency>
      <dependency>
        <groupId>net.dempsy</groupId>
        <artifactId>lib-dempsyapi</artifactId>

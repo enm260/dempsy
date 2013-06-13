@@ -1,15 +1,14 @@
 package com.nokia.dempsy.executor;
 
-import java.util.concurrent.Callable;
-import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.nokia.dempsy.util.ThreadNamer;
 
 public class DefaultDempsyExecutor implements DempsyExecutor
 {
@@ -86,9 +85,6 @@ public class DefaultDempsyExecutor implements DempsyExecutor
     */
    public void setAdditionalThreads(int additionalThreads){ this.additionalThreads = additionalThreads; }
    
-   // milliseconds per thread
-   private static final long namingTimeoutLimitFactorMillis = 100;
-   
    @Override
    public synchronized void start()
    {
@@ -105,7 +101,7 @@ public class DefaultDempsyExecutor implements DempsyExecutor
       }
       executor = (ThreadPoolExecutor)Executors.newFixedThreadPool(threadPoolSize);
       String baseName = "DempsyExc-" + executorCount;
-      new ThreadNamer(baseName, threadPoolSize, executor);
+      new ThreadNamer(baseName, threadPoolSize, executor, logger);
       numLimited = new AtomicLong(0);
       
       if (maxNumWaitingLimitedTasks < 0)
@@ -141,54 +137,53 @@ public class DefaultDempsyExecutor implements DempsyExecutor
       return executor.getQueue().size();
    }
    
-   /**
-    * How many {@link Rejectable}s passed to submitLimited are currently pending.
-    * This will always return zero when the {@link DefaultDempsyExecutor}
-    * is set to {@code unlimited}.
-    */
-   @Override
-   public int getNumberLimitedPending()
-   {
-      return numLimited.intValue();
-   }
+//   /**
+//    * How many {@link Rejectable}s passed to submitLimited are currently pending.
+//    * This will always return zero when the {@link DefaultDempsyExecutor}
+//    * is set to {@code unlimited}.
+//    */
+//   @Override
+//   public int getNumberLimitedPending()
+//   {
+//      return numLimited.intValue();
+//   }
    
    public int getHighWaterMark() { return highWaterMark; }
 
-   
    public boolean isRunning() { 
       return (executor != null) &&
          !(executor.isShutdown() || executor.isTerminated()); }
    
    @Override
-   public <V> Future<V> submit(Callable<V> r) 
+   public void submit(Runnable r) 
    {
       final int curSize = executor.getQueue().size();
       if (highWaterMark < curSize) highWaterMark = curSize;
-      return executor.submit(r);
+      executor.submit(r);
    }
 
    @Override
-   public <V> Future<V> submitLimited(final Rejectable<V> r)
+   public void processMessage(final Rejectable r)
    {
-      if (unlimited) return submit(r);
+      if (unlimited) { submit(r); return; }
       
       final int curSize = executor.getQueue().size();
       if (highWaterMark < curSize) highWaterMark = curSize;
 
-      Callable<V> task = new Callable<V>()
+      Runnable task = new Runnable()
       {
-         private Rejectable<V> o = r;
+         private Rejectable o = r;
 
          @Override
-         public V call() throws Exception
+         public void run()
          {
             long num = numLimited.decrementAndGet();
             if (blocking) { synchronized(numLimited) { numLimited.notifyAll(); } }
             
             if (blocking || num <= maxNumWaitingLimitedTasks)
-               return o.call();
-            o.rejected();
-            return null;
+               o.run();
+            else
+               o.rejected();
          }
       };
       
@@ -208,53 +203,13 @@ public class DefaultDempsyExecutor implements DempsyExecutor
       
       try
       {
-         Future<V> ret = executor.submit(task);
-         return ret;
+         executor.submit(task);
       }
       catch (RejectedExecutionException re)
       {
          numLimited.decrementAndGet();
          r.rejected();
          throw re;
-      }
-   }
-   
-   /**
-    * Names threads in a thread pool. Only works for fixed size pools.
-    */
-   private class ThreadNamer implements Runnable
-   {
-      private final int threadCount;
-      private final String baseName;
-      private long sequence = 0;
-      
-      private ThreadNamer(String baseName, int threadCount, Executor executor)
-      {
-         this.threadCount = threadCount;
-         this.baseName = baseName;
-         for (int i = 0; i < threadCount; i++)
-            executor.execute(this);
-      }
-      
-      @Override
-      public synchronized void run()
-      {
-         String threadName = baseName + "-" + sequence++;
-         Thread.currentThread().setName(threadName);
-         
-         if (sequence >= threadCount)
-            notifyAll();
-         else
-            // block until sequence gets to threadCount
-            while (sequence < threadCount)
-            {
-               try { wait(namingTimeoutLimitFactorMillis * threadCount); } catch (InterruptedException ie) {}
-            }
-         
-         if (sequence < threadCount)
-            logger.error("Failed to set all of the name's for the " + 
-                  executorCount + "'th " + DefaultDempsyExecutor.class.getSimpleName() + 
-                  ". This is either a bug in the Dempsy code OR the JVM is under tremendous load.");
       }
    }
 }
