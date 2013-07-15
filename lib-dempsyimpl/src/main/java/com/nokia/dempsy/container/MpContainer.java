@@ -226,7 +226,109 @@ public class MpContainer implements Container, ContainerTestAccess
    // Monitoring and Management
    //----------------------------------------------------------------------------
 
+<<<<<<< HEAD
    final RunningEventSwitch keyspaceChangeSwitch = new RunningEventSwitch(isRunning);
+=======
+   /**
+    *  Returns the number of message processors controlled by this manager.
+    */
+   public int getProcessorCount()
+   {
+      return instances.size();
+   }
+   
+   /**
+    * This is a helper class with unique synchronizataion behavior. It can be used to start
+    * a worker in another thread, allow the initiating thread to verify that's it's been 
+    * started, and allow the early termination of that worker thread.
+    */
+   private class RunningEventSwitch
+   {
+      final AtomicBoolean isRunning = new AtomicBoolean(false);
+      final AtomicBoolean stopRunning = new AtomicBoolean(false);
+      // this flag is used to hold up the calling thread's exit of this method
+      //  until the worker is underway.
+      final AtomicBoolean runningGate = new AtomicBoolean(false);
+      
+      /**
+       * This is called from the worker thread to notify the fact that
+       * it's been started.
+       */
+      public void workerInitiateRun()
+      {
+         // this is synchronized because it's used as a condition variable 
+         // along with the condition.
+         synchronized(isRunning) { isRunning.set(true); }
+         stopRunning.set(false);
+         
+         synchronized(runningGate)
+         {
+            runningGate.set(true);
+            runningGate.notify();
+         }
+      }
+      
+      /**
+       * The worker thread can use this method to check if it's been explicitly preempted.
+       * @return
+       */
+      public boolean wasPreempted() { return stopRunning.get(); }
+      
+      /**
+       * The worker thread should indicate that it's done in a finally clause on it's way
+       * out.
+       */
+      public void workerStopping()
+      {
+         // This kicks the preemptWorkerAndWait out.
+         synchronized(isRunning)
+         {
+            isRunning.set(false);
+            isRunning.notify();
+         }
+      }
+      
+      /**
+       * The main thread uses this method when it needs to preempt the worker and
+       * wait for the worker to finish before continuing.
+       */
+      public void preemptWorkerAndWait()
+      {
+         // We need to see if we're already executing
+         stopRunning.set(true); // kick out any running instantiation thread
+         // wait for it to exit, it it's even running - also consider the overall
+         //  Mp isRunning flag.
+         synchronized(isRunning)
+         {
+            while (isRunning.get() && MpContainer.this.isRunning)
+            {
+               try { isRunning.wait(); } catch (InterruptedException e) {}
+            }
+         }
+      }
+      
+      /**
+       * This allows the main thread to wait until the worker is started in order
+       * to continue. This method only works once. It resets the flag so a second
+       * call will block until another thread calls to workerInitiateRun().
+       */
+      public void waitForWorkerToStart()
+      {
+         // make sure the thread is running before we head out from the synchronized block
+         synchronized(runningGate)
+         {
+            while (runningGate.get() == false && MpContainer.this.isRunning)
+            {
+               try { runningGate.wait(); } catch (InterruptedException ie) {}
+            }
+
+            runningGate.set(false); // reset this flag
+         }
+      }
+   }
+   
+   final RunningEventSwitch keyspaceChangeSwitch = new RunningEventSwitch();
+>>>>>>> ab6d7b3... 0.7.3 Change the ClusterInfoSession so that mkdir and setData happen atomically. Remove all of the hacks to work around the fact that it didn't before. Testing improvements.
    final Object keyspaceResponsibilityChangedLock = new Object(); // we need to synchronize keyspaceResponsibilityChanged alone
    
    // This method is only called from an anonymous runnable and it's gated by the RunningEventSwitch expand.
@@ -240,7 +342,11 @@ public class MpContainer implements Container, ContainerTestAccess
          Iterable<?> iterable = keySource.getAllPossibleKeys();
          for(final Object key: iterable)
          {
+<<<<<<< HEAD
             if (keyspaceChangeSwitch.wasPreempted() || !isRunning.get())
+=======
+            if (keyspaceChangeSwitch.wasPreempted() || !isRunning)
+>>>>>>> ab6d7b3... 0.7.3 Change the ClusterInfoSession so that mkdir and setData happen atomically. Remove all of the hacks to work around the fact that it didn't before. Testing improvements.
                break;
             
             // strategyInbound can't be null if we're in runExpandKeyspace since it was invoked 
@@ -291,6 +397,10 @@ public class MpContainer implements Container, ContainerTestAccess
    {
       boolean grow = false;
       boolean shrink = false;
+<<<<<<< HEAD
+=======
+      RoutingStrategy.Inbound strategyInbound = null;
+>>>>>>> ab6d7b3... 0.7.3 Change the ClusterInfoSession so that mkdir and setData happen atomically. Remove all of the hacks to work around the fact that it didn't before. Testing improvements.
       
       @Override
       public void run()
@@ -307,10 +417,15 @@ public class MpContainer implements Container, ContainerTestAccess
                {
                   // we shouldEvict if the message key no longer belongs as 
                   //  part of this container.
+<<<<<<< HEAD
                   // strategyInbound can't be null if we're here since this was invoked 
                   //  indirectly from it. So here we don't need to check for null.
                   @Override
                   public boolean shouldEvict(Object key, Object instance) { return !strategyInbound.doesMessageKeyBelongToNode(key); }
+=======
+                  @Override
+                  public boolean shouldEvict(Object key, InstanceWrapper wrapper) { return !strategyInbound.doesMessageKeyBelongToNode(key); }
+>>>>>>> ab6d7b3... 0.7.3 Change the ClusterInfoSession so that mkdir and setData happen atomically. Remove all of the hacks to work around the fact that it didn't before. Testing improvements.
                   // In this case, it's evictable.
                   @Override
                   public boolean isGenerallyEvitable() { return true; }
@@ -322,12 +437,17 @@ public class MpContainer implements Container, ContainerTestAccess
             if (grow)
             {
                if (keySource != null)
+<<<<<<< HEAD
                   runExpandKeyspace();
+=======
+                  runExpandKeyspace(strategyInbound);
+>>>>>>> ab6d7b3... 0.7.3 Change the ClusterInfoSession so that mkdir and setData happen atomically. Remove all of the hacks to work around the fact that it didn't before. Testing improvements.
             }
             
             grow = shrink = false;
          }
          catch (RuntimeException exception)
+<<<<<<< HEAD
          {
             logger.error("Failed to shrink the KeySpace.", exception);
          }
@@ -345,6 +465,25 @@ public class MpContainer implements Container, ContainerTestAccess
          // need to handle less by passivating
          if (less || more)
          {
+=======
+         {
+            logger.error("Failed to shrink the KeySpace.", exception);
+         }
+         finally { keyspaceChangeSwitch.workerStopping(); }
+      }
+   }
+   
+   private KeyspaceChanger changer = new KeyspaceChanger();
+   
+   @Override
+   public void keyspaceResponsibilityChanged(final RoutingStrategy.Inbound strategyInbound, final boolean less, final boolean more)
+   {
+      synchronized(keyspaceResponsibilityChangedLock)
+      {
+         // need to handle less by passivating
+         if (less || more)
+         {
+>>>>>>> ab6d7b3... 0.7.3 Change the ClusterInfoSession so that mkdir and setData happen atomically. Remove all of the hacks to work around the fact that it didn't before. Testing improvements.
             keyspaceChangeSwitch.preemptWorkerAndWait();
             
             // we don't want to set either to false in case preempting a previous 
@@ -354,6 +493,10 @@ public class MpContainer implements Container, ContainerTestAccess
             // in the KeyspaceChanger.
             if (more) changer.grow = true;
             if (less) changer.shrink = true;
+<<<<<<< HEAD
+=======
+            changer.strategyInbound = strategyInbound;
+>>>>>>> ab6d7b3... 0.7.3 Change the ClusterInfoSession so that mkdir and setData happen atomically. Remove all of the hacks to work around the fact that it didn't before. Testing improvements.
             
             Thread t = new Thread(changer, "Keyspace Change Thread");
             t.setDaemon(true);

@@ -52,7 +52,7 @@ public class TestUtils
    public static String createApplicationLevel(ClusterId cid, ClusterInfoSession session) throws ClusterInfoException
    {
       String ret = "/" + cid.getApplicationName();
-      session.mkdir(ret, DirMode.PERSISTENT);
+      session.mkdir(ret, null, DirMode.PERSISTENT);
       return ret;
    }
    
@@ -60,7 +60,7 @@ public class TestUtils
    {
       String ret = createApplicationLevel(cid,session);
       ret += ("/" + cid.getMpClusterName());
-      session.mkdir(ret, DirMode.PERSISTENT);
+      session.mkdir(ret, null, DirMode.PERSISTENT);
       return ret;
    }
    

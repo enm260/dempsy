@@ -832,6 +832,7 @@ public class TestMpContainer
       
       final String[] keys = new String[numKeys];
       final String[] keys2 = new String[keys.length];
+
       final String[] emptyKeys = new String[0];
       for (int i = 0; i < keys.length; i++)
       {
@@ -850,22 +851,8 @@ public class TestMpContainer
       container.setKeySource(keysource);
 
       // first run the pre-initialization work to create the Mps
-      container.setInboundStrategy(inboundShards1);
-      container.keyspaceResponsibilityChanged(false, true);
+      container.keyspaceResponsibilityChanged(inboundShards1, false, true);
       
-      // as long as we're increasing, continue to wait
-      boolean done = false;
-      int lastCount = container.getProcessorCount();
-      while (!done)
-      {
-         done = true;
-         Thread.sleep(1000);
-         int nextCount = container.getProcessorCount();
-         if (lastCount < nextCount)
-            done = false;
-         lastCount = nextCount;
-      }
-
       // assert the exact number were created.
       TestUtils.poll(baseTimeoutMillis * 10, container, new TestUtils.Condition<MpContainer>() 
             { @Override public boolean conditionMet(MpContainer o) { return o.getProcessorCount() == keys.length; } });
@@ -880,25 +867,10 @@ public class TestMpContainer
       for (int i = 0; i < 1; i++)
       {
          // now we need a rapid contract followed by expand
-         container.setInboundStrategy(inboundShardsEmpty);
-         container.keyspaceResponsibilityChanged(true, false);
-         container.setInboundStrategy(inbounds[i & 1]);
-         container.keyspaceResponsibilityChanged(false, true);
+         container.keyspaceResponsibilityChanged(inboundShardsEmpty, true, false);
+         container.keyspaceResponsibilityChanged(inbounds[i & 1], false, true);
          Thread.sleep(1000);
          blockPassivate.countDown();
-      }
-      
-      // as long as we're increasing, continue to wait
-      done = false;
-      lastCount = container.getProcessorCount();
-      while (!done)
-      {
-         done = true;
-         Thread.sleep(1000);
-         int nextCount = container.getProcessorCount();
-         if (lastCount < nextCount)
-            done = false;
-         lastCount = nextCount;
       }
 
       // make sure we're back.

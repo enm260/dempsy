@@ -73,12 +73,6 @@ public class ZookeeperTestServer
     * occur by closing the session from another client.
     * see: http://wiki.apache.org/hadoop/ZooKeeper/FAQ#A4
     */
-   /**
-    * cause a problem with the server running lets sever the connection
-    * according to the zookeeper faq we can force a session expired to 
-    * occur by closing the session from another client.
-    * see: http://wiki.apache.org/hadoop/ZooKeeper/FAQ#A4
-    */
    private static class KWatcher implements Watcher
    {
       AtomicReference<ZooKeeper> connection = new AtomicReference<ZooKeeper>(null);

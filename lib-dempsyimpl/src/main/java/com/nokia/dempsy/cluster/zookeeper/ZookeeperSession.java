@@ -50,8 +50,10 @@ import com.nokia.dempsy.util.AutoDisposeSingleThreadScheduler;
 
 public class ZookeeperSession implements ClusterInfoSession, DisruptibleSession
 {
-   private static Logger logger = LoggerFactory.getLogger(ZookeeperSession.class);
+   private static final Logger logger = LoggerFactory.getLogger(ZookeeperSession.class);
    
+   private static final byte[] zeroByteArray = new byte[0];
+
    //=======================================================================
    // Manage the mapping between DirMode and ZooKeeper's CreateMode.
    //=======================================================================
@@ -86,16 +88,20 @@ public class ZookeeperSession implements ClusterInfoSession, DisruptibleSession
       ZooKeeper newZk = makeZooKeeperClient(connectString,sessionTimeout);
       if (newZk != null) setNewZookeeper(newZk);
    }
-
+   
    @Override
-   public String mkdir(String path, DirMode mode) throws ClusterInfoException
+   public String mkdir(String path, Object data, DirMode mode) throws ClusterInfoException
    {
-      return (String)callZookeeper("mkdir", path, null, mode, new ZookeeperCall()
+      return (String)callZookeeper("mkdir", path, null, new Pair<DirMode,Object>(mode,data), new ZookeeperCall()
       {
          @Override
-         public Object call(ZooKeeper cur, String path, WatcherProxy watcher, Object userdata) throws KeeperException, InterruptedException, SerializationException
+         public Object call(ZooKeeper cur, String path, WatcherProxy watcher, Object ud) throws KeeperException, InterruptedException, SerializationException
          {
-            return cur.create(path, new byte[0], Ids.OPEN_ACL_UNSAFE, from(((DirMode)userdata)));
+            @SuppressWarnings("unchecked")
+            final Pair<DirMode,Object> userdata = (Pair<DirMode,Object>)ud;
+            final Object info = userdata.getSecond();
+
+            return cur.create(path, (info == null ? zeroByteArray : serializer.serialize(info)), Ids.OPEN_ACL_UNSAFE, from(userdata.getFirst()));
          }
       });
    }
@@ -231,7 +237,7 @@ public class ZookeeperSession implements ClusterInfoSession, DisruptibleSession
    {
       private ClusterInfoWatcher watcher;
       
-      private WatcherProxy(ClusterInfoWatcher watcher)
+      public WatcherProxy(ClusterInfoWatcher watcher)
       {
          this.watcher = watcher;
       }

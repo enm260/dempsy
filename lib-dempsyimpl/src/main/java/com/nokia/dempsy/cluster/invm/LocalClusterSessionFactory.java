@@ -61,7 +61,7 @@ public class LocalClusterSessionFactory implements ClusterInfoSessionFactory
    }
    
    /// initially add the root. 
-   public static synchronized void reset() { entries.clear(); entries.put("/", new Entry()); }
+   public static synchronized void reset() { entries.clear(); entries.put("/", new Entry(null)); }
    
    public static synchronized void completeReset()
    {
@@ -99,14 +99,16 @@ public class LocalClusterSessionFactory implements ClusterInfoSessionFactory
 
    private static class Entry
    {
-      private AtomicReference<Object> data = new AtomicReference<Object>();
+      private final AtomicReference<Object> data = new AtomicReference<Object>();
       private Set<LocalSession.WatcherProxy> nodeWatchers = new HashSet<LocalSession.WatcherProxy>();
       private Set<LocalSession.WatcherProxy> childWatchers = new HashSet<LocalSession.WatcherProxy>();
-      private Collection<String> children = new ArrayList<String>();
-      private Map<String,AtomicLong> childSequences = new HashMap<String, AtomicLong>();
+      private final Collection<String> children = new ArrayList<String>();
+      private final Map<String,AtomicLong> childSequences = new HashMap<String, AtomicLong>();
 
       private volatile boolean inProcess = false;
       private Lock processLock = new ReentrantLock();
+      
+      public Entry(Object data) { this.data.set(data); }
       
       @Override
       public String toString()
@@ -219,9 +221,9 @@ public class LocalClusterSessionFactory implements ClusterInfoSessionFactory
       return e != null;
    }
    
-   private static String omkdir(String path, DirMode mode) throws ClusterInfoException
+   private static String omkdir(String path, Object data, DirMode mode) throws ClusterInfoException
    {
-      Pair<Entry,String> results = doomkdir(path,mode);
+      Pair<Entry,String> results = doomkdir(path,data,mode);
       Entry parent = results.getFirst();
       String pathToUse = results.getSecond();
       
@@ -230,7 +232,7 @@ public class LocalClusterSessionFactory implements ClusterInfoSessionFactory
       return pathToUse;
    }
    
-   private static synchronized Pair<Entry,String> doomkdir(String path, DirMode mode) throws ClusterInfoException
+   private static synchronized Pair<Entry,String> doomkdir(String path, Object data, DirMode mode) throws ClusterInfoException
    {
       if (oexists(path,null))
          return new Pair<Entry,String>(null,null);
@@ -255,7 +257,7 @@ public class LocalClusterSessionFactory implements ClusterInfoSessionFactory
 
       String pathToUse = seq >= 0 ? (path + seq) : path;
       
-      entries.put(pathToUse, new Entry());
+      entries.put(pathToUse, new Entry(data));
       // find the relative path
       int lastSlash = pathToUse.lastIndexOf('/');
       parent.children.add(pathToUse.substring(lastSlash + 1));
@@ -332,12 +334,12 @@ public class LocalClusterSessionFactory implements ClusterInfoSessionFactory
       private final WatcherProxy makeWatcher(ClusterInfoWatcher watcher) { return watcher == null ? null : new WatcherProxy(watcher); }
       
       @Override
-      public String mkdir(String path, DirMode mode) throws ClusterInfoException
+      public String mkdir(String path, Object data, DirMode mode) throws ClusterInfoException
       {
          if (stopping.get())
             throw new ClusterInfoException("mkdir called on stopped session.");
          
-         String ret = omkdir(path,mode);
+         String ret = omkdir(path,data,mode);
          if (ret != null && mode.isEphemeral())
          {
             synchronized(localEphemeralDirs)

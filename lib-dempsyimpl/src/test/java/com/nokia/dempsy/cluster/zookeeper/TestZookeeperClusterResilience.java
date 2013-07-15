@@ -132,8 +132,8 @@ public class TestZookeeperClusterResilience
                   
                   try
                   {
-                     if (session.getSubdirs(u.getShardsDir(), this).size() == 0)
-                        session.mkdir(u.getShardsDir() + "/slot1",DirMode.EPHEMERAL);
+                     if (session.getSubdirs(clusterId.asPath(), this).size() == 0)
+                        session.mkdir(clusterId.asPath() + "/slot1",null,DirMode.EPHEMERAL);
                      called.set(true);
                   }
                   catch(ClusterInfoException.NoNodeException e)
@@ -269,11 +269,10 @@ public class TestZookeeperClusterResilience
          {
             @Override
             public boolean conditionMet(MicroShardUtils o) throws Throwable {  
-               try { session.mkdir(o.getShardsDir() + "/join-1", DirMode.EPHEMERAL); return true; } catch (ClusterInfoException e) {  }
+               try { session.mkdir(o.getShardsDir() + "/join-1", null, DirMode.EPHEMERAL); return true; } catch (ClusterInfoException e) {  }
                return false;
             }
          }));
-
       }
       finally
       {
@@ -297,6 +296,8 @@ public class TestZookeeperClusterResilience
          server = new ZookeeperTestServer();
          server.start();
 
+         // the createExpireSessionClient actually results in a Disconnected/SyncConnected rotating events.
+         // ... so we need to filter those out since it will result in a callback.
          session =  new ZookeeperSession("127.0.0.1:" + port,5000);
 
          final ClusterId clusterId = new ClusterId(appname,"testSessionExpired");
@@ -328,7 +329,6 @@ public class TestZookeeperClusterResilience
          // now reset the condition
          callback.called.set(false);
          
-         // and eventually a callback
          ZookeeperTestServer.forceSessionExpiration(session.zkref.get());
 
          // we should see the session expiration in a callback
@@ -354,6 +354,26 @@ public class TestZookeeperClusterResilience
          // now we should be able to recheck
          u.mkAllPersistentAppDirs(session,null);
          assertTrue(session.exists(u.getShardsDir(), callback));
+
+         // and eventually a reconnect
+         assertTrue(poll(5000,callback,new Condition<TestWatcher>() 
+         {  
+            @Override public boolean conditionMet(TestWatcher o) 
+            {
+               try
+               {
+                  o.process();
+                  return true;
+               }
+               catch (Throwable th)
+               {
+                  return false;
+               }
+            } 
+         }));
+         
+         createClusterLevel(clusterId,session);
+         assertTrue(session.exists(clusterId.asPath(), callback));
       }
       finally
       {
@@ -755,7 +775,7 @@ public class TestZookeeperClusterResilience
          {
             @Override
             public boolean conditionMet(MicroShardUtils o) throws Throwable {  
-               try { session.mkdir(o.getShardsDir() + "/join-1", DirMode.EPHEMERAL); return false; } catch (ClusterInfoException e) { return true; }
+               try { session.mkdir(o.getShardsDir() + "/join-1", null, DirMode.EPHEMERAL); return false; } catch (ClusterInfoException e) { return true; }
             }
          }));
          
@@ -772,7 +792,7 @@ public class TestZookeeperClusterResilience
          {
             @Override
             public boolean conditionMet(MicroShardUtils o) throws Throwable {  
-               try { o.mkAllPersistentAppDirs(session, null); session.mkdir(o.getShardsDir() + "/join-1", DirMode.EPHEMERAL); return true; } catch (ClusterInfoException e) { return false; }
+               try { o.mkAllPersistentAppDirs(session, null); session.mkdir(o.getShardsDir() + "/join-1", null, DirMode.EPHEMERAL); return true; } catch (ClusterInfoException e) { return false; }
             }
          }));
          
@@ -784,7 +804,7 @@ public class TestZookeeperClusterResilience
          {
             @Override
             public boolean conditionMet(MicroShardUtils o) throws Throwable {  
-               try { session.mkdir(o.getShardsDir() + "/join-1", DirMode.EPHEMERAL); return true; } catch (ClusterInfoException e) {  }
+               try { session.mkdir(o.getShardsDir() + "/join-1", null, DirMode.EPHEMERAL); return true; } catch (ClusterInfoException e) {  }
                return false;
             }
          }));
