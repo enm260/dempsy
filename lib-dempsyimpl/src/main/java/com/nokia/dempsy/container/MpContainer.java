@@ -22,12 +22,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -37,7 +37,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -120,7 +119,7 @@ public class MpContainer implements Listener, OutputInvoker, RoutingStrategy.Inb
       /**
        * MAKE SURE YOU USE A FINALLY CLAUSE TO RELEASE THE LOCK.
        * @param block - whether or not to wait for the lock.
-       * @return the instance if the lock was aquired. null otherwise.
+       * @return the instance if the lock was acquired. null otherwise.
        */
       public Object getExclusive(boolean block)
       {
@@ -907,134 +906,84 @@ public class MpContainer implements Listener, OutputInvoker, RoutingStrategy.Inb
    }
 
    // This method MUST NOT THROW
-   public void outputPass() {
+   protected void outputPass() {
       if (!prototype.isOutputSupported())
          return;
 
       // take a snapshot of the current container state.
-      LinkedList<InstanceWrapper> toOutput = new LinkedList<InstanceWrapper>(instances.values());
+      List<InstanceWrapper> toOutput = new ArrayList<InstanceWrapper>(instances.values());
 
       Executor executorService = null;
-      Semaphore taskLock = null;
-      synchronized(lockForExecutorServiceSetter)
-      {
-         executorService = outputExecutorService;
-         if (executorService != null)
-            taskLock = new Semaphore(outputConcurrency);
-      }
+      synchronized(lockForExecutorServiceSetter) { executorService = outputExecutorService; }
 
       // This keeps track of the number of concurrently running
       // output tasks so that this method can wait until they're
       // all done to return.
-      //
-      // It's also used as a condition variable signaling on its
-      // own state changes.
-      final AtomicLong numExecutingOutputs = new AtomicLong(0);
+      final CountDownLatch executingOutputs = new CountDownLatch(toOutput.size());
 
-      // keep going until all of the outputs have been invoked
-      while (toOutput.size() > 0 && isRunning)
+      for (Iterator<InstanceWrapper> iter = toOutput.iterator(); iter.hasNext();) 
       {
-         for (final Iterator<InstanceWrapper> iter = toOutput.iterator(); iter.hasNext();) 
+         final InstanceWrapper wrapper = iter.next();
+
+         //=====================================================
+         // Runnable that will invoke the output method on the particular Mp
+         Runnable task = new Runnable()
          {
-            final InstanceWrapper wrapper = iter.next();
-            boolean gotLock = false;
-
-            gotLock = wrapper.tryLock();
-
-            if (gotLock) 
+            final InstanceWrapper mwrapper = wrapper;
+            
+            @Override
+            public void run()
             {
-               // If we've been evicted then we're on our way out
-               // so don't do anything else with this.
-               if (wrapper.isEvicted())
+               try
                {
-                  iter.remove();
-                  wrapper.releaseLock();
-                  continue;
-               } 
-
-               final Object instance = wrapper.getInstance(); // only called while holding the lock
-               final Semaphore taskSepaphore = taskLock;
-
-               // This task will release the wrapper's lock.
-               Runnable task = new Runnable()
-               {
-                  @Override
-                  public void run()
+                  if (isRunning)
                   {
+                     Object instance = null;
                      try
                      {
-                        if (isRunning && !wrapper.isEvicted()) 
-                           invokeOperation(instance, Operation.output, null); 
+                        instance = mwrapper.getExclusive(true);
+
+                        // If we've been evicted then we're on our way out
+                        // so don't do anything else with this.
+                        if (!mwrapper.isEvicted())
+                           invokeOperation(instance, Operation.output, null);
+                     }
+                     catch (RuntimeException re)
+                     {
+                        logger.error("Unexpected Exception while invoking output on " + SafeString.valueOf(instance),re);
                      }
                      finally 
                      {
-                        wrapper.releaseLock();
-
-                        // this signals that we're done.
-                        synchronized(numExecutingOutputs)
-                        {
-                           numExecutingOutputs.decrementAndGet();
-                           numExecutingOutputs.notifyAll();
-                        }
-                        if (taskSepaphore != null) taskSepaphore.release(); 
+                        mwrapper.releaseLock();
                      }
                   }
-               };
-
-               synchronized(numExecutingOutputs)
-               {
-                  numExecutingOutputs.incrementAndGet();
                }
+               finally { executingOutputs.countDown(); }
+            }
+         };
+         //=====================================================
 
-               if (executorService != null)
-               {
-                  try
-                  {
-                     taskSepaphore.acquire();
-                     executorService.execute(task);
-                  }
-                  catch (RejectedExecutionException e)
-                  {
-                     // this may happen because of a race condition between the 
-                     taskSepaphore.release();
-                     wrapper.releaseLock(); // we never got into the run so we need to release the lock
-                  }
-                  catch (InterruptedException e)
-                  {
-                     // this can happen while blocked in the semaphore.acquire.
-                     // if we're no longer running we should just get out
-                     // of here.
-                     //
-                     // Not releasing the taskSepaphore assumes the acquire never executed.
-                     // if (since) the acquire never executed we also need to release the
-                     //  wrapper lock or that Mp will never be usable again.
-                     wrapper.releaseLock(); // we never got into the run so we need to release the lock
-                  }
-               }
-               else
-                  task.run();
-
-               iter.remove();
-            } // end if we got the lock
-         } // end loop over every Mp
-      } // end while there are still Mps that haven't had output invoked.
+         if (executorService != null)
+         {
+            try { executorService.execute(task); }
+            /* this can be thrown when we're done and the executor is shutdown */
+            catch (RejectedExecutionException e) { executingOutputs.countDown();  }
+            catch (RuntimeException re)
+            {
+               logger.error("Unexpected error in output pass while submitting task", re);
+               executingOutputs.countDown();
+            }
+         }
+         else
+            task.run();
+      } // end loop over every Mp with task submission
 
       // =======================================================
       // now make sure all of the running tasks have completed
-      synchronized(numExecutingOutputs)
+      for (boolean done = false; !done && isRunning;)
       {
-         while (numExecutingOutputs.get() > 0)
-         {
-            try { numExecutingOutputs.wait(); }
-            catch (InterruptedException e)
-            {
-               // if we were interupted for a shutdown then just stop
-               // waiting for all of the threads to finish
-               if (!isRunning)
-                  break;
-               // otherwise continue checking.
-            }
-         }
+         try { executingOutputs.await(); done = true; }
+         catch(InterruptedException e) { }
       }
       // =======================================================
    }

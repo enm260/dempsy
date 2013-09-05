@@ -513,8 +513,10 @@ public class TestMpContainerLoadHandling
    }
 
    @Test
-   public void testOutputOperationsNotDiscarded() throws Exception{
-
+   public void testOutputOperationsNotDiscarded() throws Exception
+   {
+      container.setConcurrency(4 * NTHREADS); // set the concurrency so that there's a thread dedicated to each Mp for output
+      
       // prime the container with MP instances, by processing 4 * NTHREADS messages
       startLatch = new CountDownLatch(0); // do not hold up the starting of processing
       finishLatch = new CountDownLatch(NTHREADS * 4); // we expect this many messages to be handled.
