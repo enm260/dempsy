@@ -11,4 +11,11 @@
    <artifactId>lib-dempsyapi</artifactId>
    <name>Distributed Message Processing Framework - App developer API</name>
    
+   <dependencies>
+        <dependency>
+            <groupId>net.dempsy</groupId>
+            <artifactId>dempsy-utils</artifactId>
+        </dependency>
+   </dependencies>
+   
 </project>

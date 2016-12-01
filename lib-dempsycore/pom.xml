@@ -16,6 +16,10 @@
        <groupId>net.dempsy</groupId>
        <artifactId>lib-dempsyapi</artifactId>
      </dependency>
+        <dependency>
+            <groupId>net.dempsy</groupId>
+            <artifactId>dempsy-cluster.api</artifactId>
+        </dependency>
    </dependencies>
 
 </project>

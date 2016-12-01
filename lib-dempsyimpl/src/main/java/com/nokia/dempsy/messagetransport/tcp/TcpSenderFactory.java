@@ -21,7 +21,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import com.nokia.dempsy.internal.util.SafeString;
 import com.nokia.dempsy.messagetransport.Destination;
 import com.nokia.dempsy.messagetransport.MessageTransportException;
 import com.nokia.dempsy.messagetransport.Sender;
@@ -32,100 +31,89 @@ import com.yammer.metrics.Metrics;
 import com.yammer.metrics.core.Histogram;
 import com.yammer.metrics.core.MetricName;
 
-public class TcpSenderFactory implements SenderFactory
-{
-   private volatile boolean isStopped = false;
-   protected StatsCollector statsCollector = null;
-   private Map<Destination,TcpSender> senders = new HashMap<Destination, TcpSender>();
-   
-   protected final long socketWriteTimeoutMillis;
-   protected final long batchOutgoingMessagesDelayMillis;
-   protected final long maxNumberOfQueuedOutbound;
-   protected final int mtu;
-   
-   protected final Histogram batching;
-   protected final MetricName batchingMetricName;
+import net.dempsy.util.SafeString;
 
-   protected TcpSenderFactory(StatsCollector statsCollector, long maxNumberOfQueuedOutbound, long socketWriteTimeoutMillis, long batchOutgoingMessagesDelayMillis)
-   {
-      this.statsCollector = statsCollector;
-      this.socketWriteTimeoutMillis = socketWriteTimeoutMillis;
-      this.batchOutgoingMessagesDelayMillis = batchOutgoingMessagesDelayMillis;
-      this.maxNumberOfQueuedOutbound = maxNumberOfQueuedOutbound;
-      this.mtu = TcpTransport.determineMtu();
-      
-      if (batchOutgoingMessagesDelayMillis >= 0 && statsCollector != null && 
-            StatsCollectorCoda.class.isAssignableFrom(statsCollector.getClass()))
-      {
-         batchingMetricName = ((StatsCollectorCoda)statsCollector).createName("messages-batched");
-         batching = Metrics.newHistogram(batchingMetricName);
-      }
-      else
-      {
-         batching = null;
-         batchingMetricName = null;
-      }
+public class TcpSenderFactory implements SenderFactory {
+    private volatile boolean isStopped = false;
+    protected StatsCollector statsCollector = null;
+    private final Map<Destination, TcpSender> senders = new HashMap<Destination, TcpSender>();
 
-   }
+    protected final long socketWriteTimeoutMillis;
+    protected final long batchOutgoingMessagesDelayMillis;
+    protected final long maxNumberOfQueuedOutbound;
+    protected final int mtu;
 
-   @Override
-   public Sender getSender(Destination destination) throws MessageTransportException
-   {
-      if (isStopped == true)
-         throw new MessageTransportException("getSender called for the destination " + SafeString.valueOf(destination) + 
-               " on a stopped " + SafeString.valueOfClass(this));
-      
-      TcpSender sender;
-      synchronized(senders)
-      {
-         sender = senders.get(destination);
-         if (sender == null)
-         {
-            sender = makeTcpSender( (TcpDestination)destination );
-            senders.put( destination, sender );
-         }
-      }
-      return sender;
-   }
-   
-   @Override
-   public void reclaim(Destination destination)
-   {
-      synchronized(senders)
-      {
-         TcpSender sender = senders.get(destination);
-         if (sender != null)
-         {
+    protected final Histogram batching;
+    protected final MetricName batchingMetricName;
+
+    protected TcpSenderFactory(final StatsCollector statsCollector, final long maxNumberOfQueuedOutbound, final long socketWriteTimeoutMillis,
+            final long batchOutgoingMessagesDelayMillis) {
+        this.statsCollector = statsCollector;
+        this.socketWriteTimeoutMillis = socketWriteTimeoutMillis;
+        this.batchOutgoingMessagesDelayMillis = batchOutgoingMessagesDelayMillis;
+        this.maxNumberOfQueuedOutbound = maxNumberOfQueuedOutbound;
+        this.mtu = TcpTransport.determineMtu();
+
+        if (batchOutgoingMessagesDelayMillis >= 0 && statsCollector != null &&
+                StatsCollectorCoda.class.isAssignableFrom(statsCollector.getClass())) {
+            batchingMetricName = ((StatsCollectorCoda) statsCollector).createName("messages-batched");
+            batching = Metrics.newHistogram(batchingMetricName);
+        } else {
+            batching = null;
+            batchingMetricName = null;
+        }
+
+    }
+
+    @Override
+    public Sender getSender(final Destination destination) throws MessageTransportException {
+        if (isStopped == true)
+            throw new MessageTransportException("getSender called for the destination " + SafeString.valueOf(destination) +
+                    " on a stopped " + SafeString.valueOfClass(this));
+
+        TcpSender sender;
+        synchronized (senders) {
+            sender = senders.get(destination);
+            if (sender == null) {
+                sender = makeTcpSender((TcpDestination) destination);
+                senders.put(destination, sender);
+            }
+        }
+        return sender;
+    }
+
+    @Override
+    public void reclaim(final Destination destination) {
+        synchronized (senders) {
+            final TcpSender sender = senders.get(destination);
+            if (sender != null) {
+                sender.stop();
+                senders.remove(destination);
+            }
+        }
+    }
+
+    @Override
+    public void stop() {
+        isStopped = true;
+        final List<TcpSender> scol = new ArrayList<TcpSender>();
+        synchronized (senders) {
+            scol.addAll(senders.values());
+            senders.clear();
+        }
+        for (final TcpSender sender : scol)
             sender.stop();
-            senders.remove(destination);
-         }
-      }
-   }
-   
-   @Override
-   public void stop() 
-   {
-      isStopped = true;
-      List<TcpSender> scol = new ArrayList<TcpSender>();
-      synchronized(senders)
-      {
-         scol.addAll(senders.values());
-         senders.clear();
-      }
-      for (TcpSender sender : scol)
-         sender.stop();
-      
-      if (batching != null)
-         Metrics.defaultRegistry().removeMetric(batchingMetricName);
-   }
-   
-   /**
-    * This method is here for testing. It allows me to create a fake output stream that 
-    * I can disrupt to test the behavior of network failures.
-    */
-   protected TcpSender makeTcpSender(TcpDestination destination) throws MessageTransportException
-   {
-      return new TcpSender( (TcpDestination)destination, statsCollector, batching, maxNumberOfQueuedOutbound, socketWriteTimeoutMillis, batchOutgoingMessagesDelayMillis, mtu );
-   }
+
+        if (batching != null)
+            Metrics.defaultRegistry().removeMetric(batchingMetricName);
+    }
+
+    /**
+     * This method is here for testing. It allows me to create a fake output stream that I can disrupt to test the behavior of network failures.
+     */
+    protected TcpSender makeTcpSender(final TcpDestination destination) throws MessageTransportException {
+        return new TcpSender(destination, statsCollector, batching, maxNumberOfQueuedOutbound, socketWriteTimeoutMillis,
+                batchOutgoingMessagesDelayMillis, mtu);
+    }
 
 }

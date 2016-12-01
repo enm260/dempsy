@@ -110,6 +110,36 @@
         <version>${project.version}</version>
       </dependency>
 
+        <dependency>
+            <groupId>net.dempsy</groupId>
+            <artifactId>dempsy-utils</artifactId>
+            <version>2.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>net.dempsy</groupId>
+            <artifactId>dempsy-cluster.api</artifactId>
+            <version>2.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>net.dempsy</groupId>
+            <artifactId>dempsy-cluster.local</artifactId>
+            <version>2.0.0</version>
+        </dependency>
+        <dependency>
+            <groupId>net.dempsy</groupId>
+            <artifactId>dempsy-cluster.zookeeper</artifactId>
+            <version>2.0.0</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.dempsy</groupId>
+            <artifactId>dempsy-test-utils</artifactId>
+            <version>2.0.0</version>
+            <scope>test</scope>
+        </dependency>
+        
+
       <!-- Third party -->
       <dependency>
         <groupId>org.slf4j</groupId>
@@ -279,8 +309,8 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
         <configuration>
-          <source>1.6</source>
-          <target>1.6</target>
+          <source>1.8</source>
+          <target>1.8</target>
           <debug>true</debug>
         </configuration>
       </plugin>

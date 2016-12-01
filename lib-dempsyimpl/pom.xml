@@ -13,6 +13,10 @@
 
   <dependencies>
     <dependency>
+        <groupId>net.dempsy</groupId>
+        <artifactId>dempsy-cluster.api</artifactId>
+    </dependency>
+    <dependency>
       <groupId>net.dempsy</groupId>
       <artifactId>lib-dempsycore</artifactId>
     </dependency>
@@ -63,6 +67,24 @@
     <dependency>
       <groupId>org.quartz-scheduler</groupId>
       <artifactId>quartz</artifactId>
+    </dependency>
+
+        <dependency>
+            <groupId>net.dempsy</groupId>
+            <artifactId>dempsy-cluster.zookeeper</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>net.dempsy</groupId>
+            <artifactId>dempsy-test-utils</artifactId>
+            <scope>test</scope>
+        </dependency>
+    
+    <dependency>
+        <groupId>net.dempsy</groupId>
+        <artifactId>dempsy-cluster.local</artifactId>
+        <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.mockito</groupId>
